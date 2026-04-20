@@ -1,0 +1,42 @@
+{
+  "rozetka.com.ua": {
+    "title": [
+      "h1.title__font",
+      "h1[class*=title]",
+      "h1"
+    ],
+    "price": [
+      "p.product-price__big",
+      "p[class*=product-price__big]",
+      "[itemprop=price]"
+    ],
+    "old_price": [
+      "p.product-price__small",
+      "p[class*=product-price__small]"
+    ],
+    "availability_negative": [
+      "немає в наявності",
+      "закінчився",
+      "недоступний"
+    ],
+    "updated_by": "default",
+    "updated_at": "2026-04-20T18:48:57.871509+00:00"
+  },
+  "olx.ua": {
+    "json_ld": true,
+    "title_meta": "og:title",
+    "price_meta": "product:price:amount",
+    "updated_by": "default",
+    "updated_at": "2026-04-20T18:48:57.871515+00:00"
+  },
+  "prom.ua": {
+    "title": [
+      "h1[data-qaid=product_name]"
+    ],
+    "price": [
+      "[data-qaid=product_price]"
+    ],
+    "updated_by": "default",
+    "updated_at": "2026-04-20T18:48:57.871517+00:00"
+  }
+}
