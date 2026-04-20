@@ -419,49 +419,6 @@ async def do_delete(callback: CallbackQuery) -> None:
     await callback.answer("Видалено ✅")
 
 
-# ─── /feedback ────────────────────────────────────────────────────
-@router.message(Command("broadcast"), F.from_user.id == settings.ADMIN_TELEGRAM_ID)
-async def cmd_broadcast(message: Message) -> None:
-    # Текст після команди: /broadcast Увага! Планове обслуговування о 22:00
-    text = message.text.removeprefix("/broadcast").strip()
-    if not text:
-        await message.answer("Вкажи текст: /broadcast Текст повідомлення")
-        return
-
-    async with get_session() as session:
-        from sqlalchemy import select
-        users = (await session.execute(
-            select(User).where(User.is_blocked == False)
-        )).scalars().all()
-
-    sent = 0
-    failed = 0
-    for user in users:
-        try:
-            await message.bot.send_message(user.telegram_id, text, parse_mode="HTML")
-            sent += 1
-            await asyncio.sleep(0.05)  # 20 повідомлень/сек — ліміт Telegram
-        except Exception:
-            failed += 1
-
-    await message.answer(f"✅ Надіслано: {sent}\n❌ Не вдалось: {failed}")
-
-@router.message(Command("feedback"))
-async def cmd_feedback(message: Message, state: FSMContext) -> None:
-    await message.answer("💬 Напиши своє повідомлення — я передам розробнику:")
-    await state.set_state(FeedbackState.waiting)
-
-@router.message(FeedbackState.waiting)
-async def process_feedback(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    # Пересилаємо тобі
-    await message.bot.send_message(
-        settings.ADMIN_TELEGRAM_ID,
-        f"💬 Feedback від @{message.from_user.username} "
-        f"(id={message.from_user.id}):\n\n{message.text}"
-    )
-    await message.answer("✅ Дякую! Я обов'язково прочитаю.")
-
 # ─── /premium ────────────────────────────────────────────────────
 
 @router.message(Command("premium"))
@@ -498,7 +455,103 @@ async def cmd_help(message: Message) -> None:
         "/list — мої товари\n"
         "/delete — видалити товар\n"
         "/premium — підписка\n\n"
+        "/feedback — залишити повідомлення\n\n"
         "<b>Як працює:</b>\n"
         "Надсилай посилання → отримуй сповіщення коли ціна впаде 📉",
+        parse_mode="HTML",
+    )
+
+
+
+# ─── Feedback ────────────────────────────────────────────────────
+
+class FeedbackState(StatesGroup):
+    waiting = State()
+
+
+@router.message(Command("feedback"))
+async def cmd_feedback(message: Message, state: FSMContext) -> None:
+    await message.answer(
+        "💬 <b>Напиши своє повідомлення</b>\n\n"
+        "Ідея, баг, питання — я передам розробнику і постараюсь відповісти.",
+        parse_mode="HTML",
+    )
+    await state.set_state(FeedbackState.waiting)
+
+
+@router.message(FeedbackState.waiting)
+async def process_feedback(message: Message, state: FSMContext) -> None:
+    if not message.text or not message.from_user or not message.bot:
+        return
+    await state.clear()
+
+    username = f"@{message.from_user.username}" if message.from_user.username else "без юзернейму"
+
+    try:
+        await message.bot.send_message(
+            chat_id=settings.ADMIN_TELEGRAM_ID,
+            text=(
+                f"💬 <b>Feedback</b>\n\n"
+                f"👤 {message.from_user.first_name} {username}\n"
+                f"🆔 <code>{message.from_user.id}</code>\n\n"
+                f"{message.text}"
+            ),
+            parse_mode="HTML",
+        )
+        await message.answer("✅ Дякую! Я обов'язково прочитаю.")
+    except Exception:
+        await message.answer("✅ Отримано, дякую!")
+
+
+# ─── Broadcast (тільки для адміна) ───────────────────────────────
+
+@router.message(Command("broadcast"))
+async def cmd_broadcast(message: Message) -> None:
+    if not message.from_user or not message.bot:
+        return
+
+    # Тільки адмін може надсилати broadcast
+    if message.from_user.id != settings.ADMIN_TELEGRAM_ID:
+        return
+
+    text = (message.text or "").removeprefix("/broadcast").strip()
+    if not text:
+        await message.answer(
+            "Використання:\n<code>/broadcast Текст повідомлення</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    from sqlalchemy import select as sa_select
+    async with get_session() as session:
+        users = (await session.execute(
+            sa_select(User).where(User.is_blocked == False)
+        )).scalars().all()
+
+    await message.answer(f"⏳ Надсилаю {len(users)} юзерам...")
+
+    sent = failed = 0
+    for user in users:
+        try:
+            await message.bot.send_message(
+                chat_id=user.telegram_id,
+                text=text,
+                parse_mode="HTML",
+            )
+            sent += 1
+            # Telegram дозволяє ~30 повідомлень/сек групам і ~20/сек юзерам
+            await asyncio.sleep(0.05)
+        except Exception as e:
+            if "bot was blocked" in str(e).lower():
+                async with get_session() as s:
+                    u = await s.get(User, user.id)
+                    if u:
+                        u.is_blocked = True
+            failed += 1
+
+    await message.answer(
+        f"✅ <b>Broadcast завершено</b>\n\n"
+        f"📤 Надіслано: {sent}\n"
+        f"❌ Не вдалось: {failed}",
         parse_mode="HTML",
     )

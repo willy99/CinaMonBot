@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     FREE_TIER_CHECK_INTERVAL_MINUTES: int = 360    # 6 годин
     PREMIUM_CHECK_INTERVAL_MINUTES: int = 60       # 1 година
     # Головний цикл планувальника (кожні N хвилин)
-    SCHEDULER_INTERVAL_MINUTES: int = 15
+    SCHEDULER_INTERVAL_MINUTES: int = 5
 
     # ─── Scraping ────────────────────────────────────────────────
     SCRAPE_DELAY_SECONDS: float = 2.0
@@ -44,12 +44,12 @@ class Settings(BaseSettings):
 
     # ─── Business ────────────────────────────────────────────────
     FREE_TIER_MAX_ITEMS: int = 5
-    PREMIUM_PRICE_UAH: int = 99
+    PREMIUM_PRICE_UAH: int = 70
 
 
     # ─── AI Auto-Healing ────────────────────────────────────
     ANTHROPIC_API_KEY: str = ""
-    ADMIN_TELEGRAM_ID: int = 0
+    ADMIN_TELEGRAM_ID: int = 431742835
 
     # ─── Payments (необов'язково на старті) ──────────────────────
     LIQPAY_PUBLIC_KEY: str = ""
