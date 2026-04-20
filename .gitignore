@@ -3,5 +3,11 @@ logs/
 
 .env
 .venv
+.python-version
+*.xml
+*.iml
+pyproject.toml
+
 __pycache__/
 .DS_Store
+/venv/
