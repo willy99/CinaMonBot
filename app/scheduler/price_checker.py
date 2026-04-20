@@ -31,6 +31,9 @@ logger = structlog.get_logger(__name__)
 # Глобальний scheduler — один на весь процес
 scheduler = AsyncIOScheduler(timezone="Europe/Kyiv")
 
+# НОВЕ: максимум перевірок за один запуск — обмежує пікове навантаження
+MAX_CHECKS_PER_RUN = 200
+
 
 def setup_scheduler(bot) -> None:
     """
@@ -48,17 +51,20 @@ def setup_scheduler(bot) -> None:
         next_run_time=datetime.now(timezone.utc) + timedelta(minutes=1),
     )
     scheduler.start()
-    logger.info("scheduler_started", interval_minutes=settings.SCHEDULER_INTERVAL_MINUTES)
+    logger.info("scheduler_started", interval_minutes=settings.SCHEDULER_INTERVAL_MINUTES, max_per_run=MAX_CHECKS_PER_RUN)
 
 
 async def dispatch_price_checks(bot) -> None:
     logger.info("dispatch_started")
 
     async with get_session() as session:
+        # НОВЕ: сортуємо по last_checked_at ASC — найстаріші перевіряємо першими
+        # NULL (ніколи не перевірялись) йдуть самими першими
         stmt = (
             select(PriceTracker)
             .where(PriceTracker.status == TrackerStatus.ACTIVE)
             .options(joinedload(PriceTracker.user))
+            .order_by(PriceTracker.last_checked_at.asc().nullsfirst())
         )
         result = await session.execute(stmt)
         trackers = result.scalars().all()
@@ -81,6 +87,9 @@ async def dispatch_price_checks(bot) -> None:
                 last = last.replace(tzinfo=timezone.utc)
             if now >= last + timedelta(minutes=interval):
                 to_check.append(tracker)
+
+        if len(to_check) >= MAX_CHECKS_PER_RUN:
+            break
 
     if not to_check:
         logger.info("dispatch_nothing_to_check", total=len(trackers))
