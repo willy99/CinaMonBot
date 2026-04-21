@@ -560,3 +560,105 @@ async def cmd_broadcast(message: Message) -> None:
         f"❌ Не вдалось: {failed}",
         parse_mode="HTML",
     )
+
+
+# ─── /stats (тільки адмін) ───────────────────────────────────────
+
+@router.message(Command("stats"))
+async def cmd_stats(message: Message) -> None:
+    if not message.from_user:
+        return
+    if message.from_user.id != settings.ADMIN_TELEGRAM_ID:
+        return
+
+    from sqlalchemy import select, func
+    from app.database.models import PriceHistory, Notification, NotificationStatus
+
+    async with get_session() as session:
+
+        # Юзери
+        total_users = (await session.execute(
+            select(func.count()).select_from(User)
+        )).scalar_one()
+
+        active_users = (await session.execute(
+            select(func.count()).select_from(User)
+            .where(User.is_blocked == False)
+        )).scalar_one()
+
+        premium_users = (await session.execute(
+            select(func.count()).select_from(User)
+            .where(User.tier == "premium")
+        )).scalar_one()
+
+        # Трекери
+        total_trackers = (await session.execute(
+            select(func.count()).select_from(PriceTracker)
+        )).scalar_one()
+
+        active_trackers = (await session.execute(
+            select(func.count()).select_from(PriceTracker)
+            .where(PriceTracker.status == TrackerStatus.ACTIVE)
+        )).scalar_one()
+
+        error_trackers = (await session.execute(
+            select(func.count()).select_from(PriceTracker)
+            .where(PriceTracker.status == TrackerStatus.ERROR)
+        )).scalar_one()
+
+        # Перевірки за останні 24 години
+        from datetime import datetime, timezone, timedelta
+        since = datetime.now(timezone.utc) - timedelta(hours=24)
+
+        checks_24h = (await session.execute(
+            select(func.count()).select_from(PriceHistory)
+            .where(PriceHistory.recorded_at >= since)
+        )).scalar_one()
+
+        # Сповіщення за останні 24 години
+        notif_24h = (await session.execute(
+            select(func.count()).select_from(Notification)
+            .where(
+                Notification.created_at >= since,
+                Notification.status == NotificationStatus.SENT,
+            )
+        )).scalar_one()
+
+        # Домени — скільки трекерів на кожен сайт
+        domain_rows = (await session.execute(
+            select(PriceTracker.source, func.count().label("cnt"))
+            .where(PriceTracker.status == TrackerStatus.ACTIVE)
+            .group_by(PriceTracker.source)
+            .order_by(func.count().desc())
+        )).all()
+
+    domains_text = "\n".join(
+        f"  • {row.source}: {row.cnt}" for row in domain_rows
+    ) or "  немає"
+
+    # Прогрес-бар для помилок
+    error_pct = int(error_trackers / total_trackers * 100) if total_trackers else 0
+    health_bar = "🟢" if error_pct < 10 else "🟡" if error_pct < 30 else "🔴"
+
+    await message.answer(
+        f"📊 <b>Статистика PriceGuard</b>\n"
+        f"<i>{datetime.now(timezone.utc).strftime('%d.%m.%Y %H:%M')} UTC</i>\n\n"
+
+        f"👥 <b>Юзери</b>\n"
+        f"  Всього: {total_users}\n"
+        f"  Активні: {active_users}\n"
+        f"  Premium: {premium_users} 💰\n\n"
+
+        f"🔍 <b>Трекери</b>\n"
+        f"  Всього: {total_trackers}\n"
+        f"  Активні: {active_trackers}\n"
+        f"  З помилками: {error_trackers} {health_bar}\n\n"
+
+        f"📈 <b>За останні 24 год</b>\n"
+        f"  Перевірок цін: {checks_24h}\n"
+        f"  Сповіщень відправлено: {notif_24h}\n\n"
+
+        f"🌐 <b>Майданчики</b>\n"
+        f"{domains_text}",
+        parse_mode="HTML",
+    )
