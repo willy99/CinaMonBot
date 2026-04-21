@@ -20,8 +20,9 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
-import structlog
 import asyncio
+import structlog
+
 from app.config import settings
 from app.database.session import get_session
 from app.database.models import PriceTracker, TrackerStatus, User
@@ -35,29 +36,35 @@ class AddTrackerStates(StatesGroup):
     waiting_for_url = State()
     waiting_for_target_price = State()
 
-class FeedbackState(StatesGroup):
-    waiting = State()
 
 # ─── DB helpers ──────────────────────────────────────────────────
 
 async def get_or_create_user(from_user) -> User:
     """Завжди передавай event.from_user — там реальна людина."""
     from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
     async with get_session() as session:
         user = (await session.execute(
             select(User).where(User.telegram_id == from_user.id)
         )).scalar_one_or_none()
 
         if not user:
-            user = User(
-                telegram_id=from_user.id,
-                username=getattr(from_user, "username", None),
-                first_name=getattr(from_user, "first_name", None),
-                language_code=getattr(from_user, "language_code", None) or "uk",
-            )
-            session.add(user)
-            await session.flush()
-            logger.info("new_user", telegram_id=from_user.id)
+            try:
+                user = User(
+                    telegram_id=from_user.id,
+                    username=getattr(from_user, "username", None),
+                    first_name=getattr(from_user, "first_name", None),
+                    language_code=getattr(from_user, "language_code", None) or "uk",
+                )
+                session.add(user)
+                await session.flush()
+                logger.info("new_user", telegram_id=from_user.id)
+            except IntegrityError:
+                # Race condition: інший запит вже створив юзера — просто завантажуємо
+                await session.rollback()
+                user = (await session.execute(
+                    select(User).where(User.telegram_id == from_user.id)
+                )).scalar_one()
         return user
 
 
@@ -455,12 +462,10 @@ async def cmd_help(message: Message) -> None:
         "/list — мої товари\n"
         "/delete — видалити товар\n"
         "/premium — підписка\n\n"
-        "/feedback — залишити повідомлення\n\n"
         "<b>Як працює:</b>\n"
         "Надсилай посилання → отримуй сповіщення коли ціна впаде 📉",
         parse_mode="HTML",
     )
-
 
 
 # ─── Feedback ────────────────────────────────────────────────────

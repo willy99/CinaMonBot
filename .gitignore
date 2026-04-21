@@ -1,9 +1,9 @@
 # Ігнорувати конкретну папку з даними
 logs/
 
+.env.prod
 .env
 .venv
-.python-version
 *.xml
 *.iml
 pyproject.toml

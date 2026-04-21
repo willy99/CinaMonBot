@@ -1,6 +1,5 @@
 from functools import lru_cache
-from pathlib import Path
-from pydantic import SecretStr, model_validator
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -35,7 +34,7 @@ class Settings(BaseSettings):
     FREE_TIER_CHECK_INTERVAL_MINUTES: int = 360    # 6 годин
     PREMIUM_CHECK_INTERVAL_MINUTES: int = 60       # 1 година
     # Головний цикл планувальника (кожні N хвилин)
-    SCHEDULER_INTERVAL_MINUTES: int = 5
+    SCHEDULER_INTERVAL_MINUTES: int = 15
 
     # ─── Scraping ────────────────────────────────────────────────
     SCRAPE_DELAY_SECONDS: float = 2.0
@@ -44,7 +43,7 @@ class Settings(BaseSettings):
 
     # ─── Business ────────────────────────────────────────────────
     FREE_TIER_MAX_ITEMS: int = 5
-    PREMIUM_PRICE_UAH: int = 70
+    PREMIUM_PRICE_UAH: int = 99
 
 
     # ─── AI Auto-Healing ────────────────────────────────────
