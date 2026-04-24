@@ -56,7 +56,7 @@ def create_payment_url(user_id: str, telegram_id: int) -> str:
         "action": "pay",
         "amount": settings.PREMIUM_PRICE_UAH,
         "currency": "UAH",
-        "description": f"PriceGuard Premium — 1 місяць",
+        "description": f"ЦінаБот Premium — 1 місяць",
         "order_id": order_id,
         # Після оплати LiqPay показує цю сторінку юзеру
         "result_url": "https://t.me/cina_mon_bot",

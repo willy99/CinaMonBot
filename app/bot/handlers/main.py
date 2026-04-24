@@ -98,21 +98,64 @@ async def get_trackers(user_id: str) -> list[PriceTracker]:
 async def cmd_start(message: Message) -> None:
     if not message.from_user:
         return
-    await get_or_create_user(message.from_user)
+    user = await get_or_create_user(message.from_user)
     name = message.from_user.first_name or "друже"
+
+    # Текст залежить від того чи є Premium
+    if user.is_premium:
+        f"ℹ️ <b>ЦінаБот — моніторинг цін</b>\n\n"
+        f"Автоматично стежу за цінами на Rozetka, OLX, Prom.ua "
+        f"і сповіщаю коли ціна знизилась 📉\n\n"
+
+        subtitle = "⭐ У тебе активний Premium — насолоджуйся!"
+    else:
+        subtitle = (
+
+            f"🆓 Безкоштовно: до {settings.FREE_TIER_MAX_ITEMS} товарів\n"
+            f"⭐ Premium {settings.PREMIUM_PRICE_UAH} грн/міс: кількість товарів у списку необмежено\n\n"
+            
+            f"/info - для детальної інформації.\n"
+            f"/help - для доступних команд.\n"
+        )
+
+    # Кнопки — Premium тільки якщо не куплено
+    buttons = [
+        [InlineKeyboardButton(text="➕ Додати товар", callback_data="add_tracker")],
+        [
+            InlineKeyboardButton(text="📋 Мої товари", callback_data="my_list"),
+            InlineKeyboardButton(text="🗑 Видалити", callback_data="delete_menu"),
+        ],
+    ]
+    if not user.is_premium:
+        buttons.append(
+            [InlineKeyboardButton(text="⭐ Купити Premium", callback_data="premium_info")]
+        )
+
     await message.answer(
         f"👋 Привіт, {name}!\n\n"
-        f"Я <b>PriceGuard</b> — стежу за цінами на Rozetka, OLX, Prom.ua 📉\n\n"
-        f"<b>Безкоштовно:</b> до {settings.FREE_TIER_MAX_ITEMS} товарів\n"
-        f"<b>Premium ({settings.PREMIUM_PRICE_UAH} грн/міс):</b> необмежено + щогодинна перевірка",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Додати товар", callback_data="add_tracker")],
-            [
-                InlineKeyboardButton(text="📋 Мої товари", callback_data="my_list"),
-                InlineKeyboardButton(text="🗑 Видалити", callback_data="delete_menu"),
-            ],
-            [InlineKeyboardButton(text="⭐ Premium", callback_data="premium_info")],
-        ]),
+        
+        f"<b>ЦінаБот</b> — автоматичний моніторинг цін на Rozetka, OLX, Prom.ua "
+        f"і сповіщення, коли ціна знизилась 📉\n\n"
+        
+        f"{subtitle}\n\n"
+    
+        f"🆓 Безкоштовно: до {settings.FREE_TIER_MAX_ITEMS} товарів\n"
+        f"⭐ Premium {settings.PREMIUM_PRICE_UAH} грн/міс: кількість товарів у списку необмежено\n\n"
+
+        f"/info - для детальної інформації.\n"
+        f"/help - для доступних команд.\n"
+
+        "━━━━━━━━━━━━━━━\n"
+        "📞 <b>Контакти для звернень:</b>\n"
+        "Email: willy2005@gmail.com\n"
+        "Зворотній зв'язок у боті: /feedback\n\n"
+
+        "━━━━━━━━━━━━━━━\n"
+        "🏢 <b>Виконавець:</b>\n"
+        "👤 Фізична особа Желнов Павло,\n"
+        "📍 м. Павлоград, Україна\n\n",
+
+    reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
         parse_mode="HTML",
     )
 
@@ -432,22 +475,45 @@ async def do_delete(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == "premium_info")
 async def cmd_premium(event: Message | CallbackQuery) -> None:
     msg = event.message if isinstance(event, CallbackQuery) else event
-    if not msg:
+    if not msg or not event.from_user:
         return
-    await msg.answer(
-        f"⭐ <b>PriceGuard Premium</b> — {settings.PREMIUM_PRICE_UAH} грн/місяць\n\n"
-        f"✅ Необмежена кількість товарів\n"
-        f"✅ Перевірка щогодини (замість 6 год)\n"
-        f"✅ Графік зміни цін\n\n"
-        f"<i>Оплата: Visa/Mastercard/Monobank</i>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text=f"💳 Оплатити {settings.PREMIUM_PRICE_UAH} грн",
-                callback_data="pay_premium",
-            )],
-        ]),
-        parse_mode="HTML",
-    )
+
+    user = await get_or_create_user(event.from_user)
+
+    if user.is_premium:
+        from datetime import timezone
+        until = user.premium_until
+        until_str = until.strftime("%d.%m.%Y") if until else "—"
+        await msg.answer(
+            f"⭐ <b>У тебе активний Premium!</b>\n\n"
+            f"📅 Діє до: <b>{until_str}</b>\n\n"
+            f"✅ Необмежена кількість товарів\n"
+            f"✅ Пріоритетна перевірка цін\n\n"
+            f"Дякуємо за підтримку! 🙏\n\n"
+            f"<i>Для продовження підписки натисни кнопку нижче після закінчення терміну.</i>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔄 Продовжити Premium",
+                    callback_data="pay_premium",
+                )],
+            ]),
+            parse_mode="HTML",
+        )
+    else:
+        await msg.answer(
+            f"⭐ <b>Premium</b> — {settings.PREMIUM_PRICE_UAH} грн/місяць\n\n"
+            f"✅ Необмежена кількість товарів\n"
+            f"✅ Пріоритетна перевірка цін\n\n"
+            f"<i>Оплата: Visa / Mastercard / Monobank</i>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text=f"💳 Оплатити {settings.PREMIUM_PRICE_UAH} грн",
+                    callback_data="pay_premium",
+                )],
+            ]),
+            parse_mode="HTML",
+        )
+
     if isinstance(event, CallbackQuery):
         await event.answer()
 
@@ -462,6 +528,8 @@ async def cmd_help(message: Message) -> None:
         "/list — мої товари\n"
         "/delete — видалити товар\n"
         "/premium — підписка\n\n"
+        "/feedback — відгук, ідея\n\n"
+        "/info — інфо про сервіс\n\n"
         "<b>Як працює:</b>\n"
         "Надсилай посилання → отримуй сповіщення коли ціна впаде 📉",
         parse_mode="HTML",
@@ -478,7 +546,7 @@ class FeedbackState(StatesGroup):
 async def cmd_feedback(message: Message, state: FSMContext) -> None:
     await message.answer(
         "💬 <b>Напиши своє повідомлення</b>\n\n"
-        "Ідея, баг, питання — я передам розробнику і постараюсь відповісти.",
+        "Ідея, баг, питання — ділись, а я прочитаю і постараюсь відповісти.",
         parse_mode="HTML",
     )
     await state.set_state(FeedbackState.waiting)
@@ -641,7 +709,7 @@ async def cmd_stats(message: Message) -> None:
     health_bar = "🟢" if error_pct < 10 else "🟡" if error_pct < 30 else "🔴"
 
     await message.answer(
-        f"📊 <b>Статистика PriceGuard</b>\n"
+        f"📊 <b>Статистика ЦінаБот</b>\n"
         f"<i>{datetime.now(timezone.utc).strftime('%d.%m.%Y %H:%M')} UTC</i>\n\n"
 
         f"👥 <b>Юзери</b>\n"
@@ -660,5 +728,172 @@ async def cmd_stats(message: Message) -> None:
 
         f"🌐 <b>Майданчики</b>\n"
         f"{domains_text}",
+        parse_mode="HTML",
+    )
+
+
+# ─── Оплата Premium ──────────────────────────────────────────────
+
+@router.callback_query(F.data == "pay_premium")
+async def cmd_pay_premium(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.message:
+        return
+
+    # Якщо LiqPay не налаштований — показуємо заглушку
+    if not settings.LIQPAY_PUBLIC_KEY:
+        await callback.message.answer(
+            "⏳ Оплата ще налаштовується.\n"
+            "Напиши адміну: @твій_юзернейм"
+        )
+        await callback.answer()
+        return
+
+    user = await get_or_create_user(callback.from_user)
+
+    if user.is_premium:
+        await callback.answer("У тебе вже є Premium! ⭐", show_alert=True)
+        return
+
+    from app.bot.payments import create_payment_url
+    payment_url = create_payment_url(user.id, user.telegram_id)
+
+    await callback.message.answer(
+        f"💳 <b>Оплата Premium</b>\n\n"
+        f"Сума: <b>{settings.PREMIUM_PRICE_UAH} грн</b>\n"
+        f"Термін: 30 днів\n\n"
+        f"Після оплати натисни кнопку нижче щоб активувати.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"💳 Перейти до оплати",
+                url=payment_url,
+            )],
+            [InlineKeyboardButton(
+                text="✅ Я оплатив — активувати",
+                callback_data=f"check_payment:{user.id}",
+            )],
+        ]),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("check_payment:"))
+async def check_payment(callback: CallbackQuery) -> None:
+    """
+    Юзер натиснув "Я оплатив" — перевіряємо через LiqPay API.
+    Polling підхід: шукаємо останній успішний платіж цього юзера.
+    """
+    if not callback.from_user or not callback.message:
+        return
+
+    user_id = callback.data.split(":", 1)[1]
+    user = await get_or_create_user(callback.from_user)
+
+    # Перевірка що це той самий юзер
+    if user.id != user_id:
+        await callback.answer("Помилка", show_alert=True)
+        return
+
+    await callback.answer("⏳ Перевіряю оплату...")
+
+    from app.bot.payments import check_payment_status, activate_premium
+    import time
+
+    # Шукаємо order_id для цього юзера за останні 30 хвилин
+    # Перебираємо можливі order_id (по timestamp)
+    now = int(time.time())
+    found = False
+
+    for ts in range(now, now - 1800, -1):  # 30 хвилин назад
+        order_id = f"premium_{user_id}_{ts}"
+        status = await check_payment_status(order_id)
+
+        if status == "success":
+            await activate_premium(user_id)
+            await callback.message.edit_text(
+                "🎉 <b>Premium активовано!</b>\n\n"
+                "✅ Необмежена кількість товарів\n"
+                # "✅ Перевірка щогодини\n\n"
+                "Дякую за підтримку! 🙏",
+                parse_mode="HTML",
+            )
+            found = True
+            break
+        elif status in ("wait_accept", "processing"):
+            await callback.message.edit_text(
+                "⏳ Платіж обробляється...\n"
+                "Спробуй ще раз через хвилину.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text="🔄 Перевірити ще раз",
+                        callback_data=f"check_payment:{user_id}",
+                    )]
+                ]),
+            )
+            found = True
+            break
+
+    if not found:
+        await callback.message.edit_text(
+            "❌ Оплату не знайдено.\n\n"
+            "Якщо ти щойно оплатив — зачекай 1-2 хвилини і спробуй знову.\n"
+            "Якщо проблема не зникає — напиши /feedback",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔄 Перевірити ще раз",
+                    callback_data=f"check_payment:{user_id}",
+                )]
+            ]),
+        )
+
+
+@router.message(Command("info"))
+async def cmd_info(message: Message) -> None:
+    await message.answer(
+        "ℹ️ <b>ЦінаБот — моніторинг цін</b>\n\n"
+        "Автоматично стежу за цінами на Rozetka, OLX, Prom.ua "
+        "і сповіщаю коли ціна знизилась 📉\n\n"
+
+        "Додай товар → отримай сповіщення коли ціна впаде 📉\n\n"
+        "📍 Де шукаю знижки:\n"
+        "- Rozetka — так\n"
+        "- OLX — так\n"  
+        "- Prom.ua — так\n"
+        "- У сусіда в гаражі — в стадії розробки 😅.\n\n"
+
+        "━━━━━━━━━━━━━━━\n"
+        "📦 <b>Послуги та ціни:</b>\n"
+        "🆓 Безкоштовний план:\n"
+        "  • до 5 товарів одночасно\n"
+        "  • перевірка кожні 12 годин\n"
+        "  • сповіщення при зниженні ціни\n\n"
+        
+        f"⭐ Premium — {settings.PREMIUM_PRICE_UAH} грн/місяць:\n"
+        "  • необмежена кількість товарів\n"
+        "  • перевірка кожні 2 години\n\n"
+        
+        "💳 <b>Оплата:</b> LiqPay (Visa / Mastercard / Monobank / ПриватБанк)\n\n"
+
+        "━━━━━━━━━━━━━━━\n"
+        "🔄 <b>Умови повернення:</b>\n"
+        "Повернення коштів протягом 14 днів з моменту оплати, "
+        "якщо послуга не надавалась або не відповідає опису. "
+        
+        "Для повернення — звернутись на email нижче.\n\n"
+        
+        "━━━━━━━━━━━━━━━\n"
+        "📞 <b>Контакти для звернень:</b>\n"
+        "Email: willy2005@gmail.com\n"
+        "Зворотній зв'язок у боті: /feedback\n\n"
+        
+        "━━━━━━━━━━━━━━━\n"
+        "🏢 <b>Виконавець:</b>\n"        
+        "👤 Фізична особа Желнов Павло,\n"
+        "📍 м. Павлоград, Україна\n\n"
+
+        "<i>⚠️ Сервіс надається «як є». "
+        "Точність цін залежить від зовнішніх майданчиків. \n"
+        "Повернення коштів — протягом 14 днів якщо послуга не надавалась.</i>\n\n"
+        "/help - допомога по поточним командам\n",
         parse_mode="HTML",
     )

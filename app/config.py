@@ -43,7 +43,7 @@ class Settings(BaseSettings):
 
     # ─── Business ────────────────────────────────────────────────
     FREE_TIER_MAX_ITEMS: int = 5
-    PREMIUM_PRICE_UAH: int = 99
+    PREMIUM_PRICE_UAH: int = 60
 
 
     # ─── AI Auto-Healing ────────────────────────────────────
