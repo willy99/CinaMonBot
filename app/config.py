@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     FREE_TIER_MAX_ITEMS: int = 5
     PREMIUM_PRICE_UAH: int = 60
 
+    CARD_NUMBER: str = "5169 3600 3222 2238"  # номер картки для оплати Premium
+    CARD_IBAN: str = "UA43 305299 0262 0164 0100 4937123"
+
+
 
     # ─── AI Auto-Healing ────────────────────────────────────
     ANTHROPIC_API_KEY: str = ""

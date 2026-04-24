@@ -734,6 +734,133 @@ async def cmd_stats(message: Message) -> None:
 
 # ─── Оплата Premium ──────────────────────────────────────────────
 
+# ─── Оплата через IBAN ───────────────────────────────────────────
+
+@router.callback_query(F.data == "pay_premium")
+async def cmd_pay_premium(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.message:
+        return
+
+    user = await get_or_create_user(callback.from_user)
+
+    if user.is_premium:
+        await callback.answer("У тебе вже є Premium! ⭐", show_alert=True)
+        return
+
+    # Формуємо унікальне призначення платежу щоб легко знайти в банку
+    payment_ref = f"PREM-{user.telegram_id}"
+
+    await callback.message.answer(
+        f"💳 <b>Оплата Premium — {settings.PREMIUM_PRICE_UAH} грн</b>\n\n"
+        f"Переказ на картку Privat:\n\n"
+        f"<code>{settings.CARD_NUMBER}</code>\n\n"
+        f"Отримувач: <b>Желнов Павло</b>\n"
+        f"Сума: <b>{settings.PREMIUM_PRICE_UAH} грн</b>\n\n"
+        f"У призначенні платежу обовʼязково вкажи:\n"
+        f"<code>{payment_ref}</code>\n\n"
+        f"Після оплати надішли скріншот через /feedback — "
+        f"активую Premium протягом кількох годин 🙏",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+    # Повідомляємо адміна про намір оплати
+    if settings.ADMIN_TELEGRAM_ID and callback.bot:
+        username = f"@{callback.from_user.username}" if callback.from_user.username else "без юзернейму"
+        try:
+            await callback.bot.send_message(
+                chat_id=settings.ADMIN_TELEGRAM_ID,
+                text=(
+                    f"💰 <b>Хтось хоче Premium!</b>\n\n"
+                    f"👤 {callback.from_user.first_name} {username}\n"
+                    f"🆔 Telegram ID: <code>{callback.from_user.id}</code>\n"
+                    f"🔑 Ref: <code>{payment_ref}</code>\n\n"
+                    f"Для активації після оплати:\n"
+                    f"<code>/activate {callback.from_user.id}</code>"
+                ),
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
+
+# ─── /activate (тільки адмін) ────────────────────────────────────
+
+@router.message(Command("activate"))
+async def cmd_activate(message: Message) -> None:
+    """
+    Ручна активація Premium адміном після перевірки оплати.
+    Використання: /activate 431742835
+    Або з терміном: /activate 431742835 60  (60 днів)
+    """
+    if not message.from_user:
+        return
+    if message.from_user.id != settings.ADMIN_TELEGRAM_ID:
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) < 2:
+        await message.answer(
+            "Використання:\n"
+            "<code>/activate TELEGRAM_ID</code>\n"
+            "<code>/activate TELEGRAM_ID 60</code> (днів)\n\n"
+            "Приклад: <code>/activate 431742835</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    try:
+        target_telegram_id = int(parts[1])
+        days = int(parts[2]) if len(parts) > 2 else 30
+    except ValueError:
+        await message.answer("❌ Невірний формат. Telegram ID має бути числом.")
+        return
+
+    from sqlalchemy import select
+    from datetime import datetime, timezone, timedelta
+
+    async with get_session() as session:
+        user = (await session.execute(
+            select(User).where(User.telegram_id == target_telegram_id)
+        )).scalar_one_or_none()
+
+        if not user:
+            await message.answer(f"❌ Юзер з ID {target_telegram_id} не знайдений.")
+            return
+
+        user.tier = "premium"
+        user.premium_until = datetime.now(timezone.utc) + timedelta(days=days)
+        name = user.first_name or "Юзер"
+        until_str = user.premium_until.strftime("%d.%m.%Y")
+
+    await message.answer(
+        f"✅ <b>Premium активовано!</b>\n\n"
+        f"👤 {name} (ID: {target_telegram_id})\n"
+        f"📅 Діє до: {until_str} ({days} днів)",
+        parse_mode="HTML",
+    )
+
+    # Повідомляємо юзера
+    try:
+        await message.bot.send_message(
+            chat_id=target_telegram_id,
+            text=(
+                f"🎉 <b>Premium активовано!</b>\n\n"
+                f"📅 Діє до: <b>{until_str}</b>\n\n"
+                f"✅ Необмежена кількість товарів\n"
+                f"✅ Пріоритетна перевірка цін\n\n"
+                f"Дякуємо за підтримку! 🙏"
+            ),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        await message.answer(f"⚠️ Не вдалось повідомити юзера: {e}")
+
+
+
+'''
+
+
 @router.callback_query(F.data == "pay_premium")
 async def cmd_pay_premium(callback: CallbackQuery) -> None:
     if not callback.from_user or not callback.message:
@@ -845,7 +972,7 @@ async def check_payment(callback: CallbackQuery) -> None:
                 )]
             ]),
         )
-
+'''
 
 @router.message(Command("info"))
 async def cmd_info(message: Message) -> None:
