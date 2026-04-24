@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ЦінаБот — моніторинг цін</title>
+  <meta name="description" content="Автоматичний моніторинг цін на Rozetka, OLX, Prom.ua. Сповіщення коли ціна впаде. Безкоштовно до 5 товарів." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&family=Geologica:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --surface: #12121a;
+      --card: #1a1a26;
+      --border: rgba(255,255,255,0.08);
+      --accent: #4f6ef7;
+      --accent2: #7c3aed;
+      --green: #22c55e;
+      --text: #e8e8f0;
+      --muted: #6b6b8a;
+      --gold: #f59e0b;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Geologica', sans-serif;
+      font-weight: 300;
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* ── NOISE TEXTURE ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── GLOW ORBS ── */
+    .orb {
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(120px);
+      pointer-events: none;
+      z-index: 0;
+    }
+    .orb-1 {
+      width: 600px; height: 600px;
+      background: radial-gradient(circle, rgba(79,110,247,0.15), transparent 70%);
+      top: -200px; left: -200px;
+    }
+    .orb-2 {
+      width: 500px; height: 500px;
+      background: radial-gradient(circle, rgba(124,58,237,0.12), transparent 70%);
+      bottom: 100px; right: -150px;
+    }
+
+    /* ── NAV ── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      padding: 1rem 2rem;
+      background: rgba(10,10,15,0.8);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .logo {
+      font-family: 'Unbounded', sans-serif;
+      font-weight: 700;
+      font-size: 1.1rem;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .nav-cta {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: white;
+      border: none;
+      padding: 0.5rem 1.25rem;
+      border-radius: 8px;
+      font-family: 'Geologica', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      text-decoration: none;
+      transition: opacity 0.2s, transform 0.2s;
+    }
+    .nav-cta:hover { opacity: 0.85; transform: translateY(-1px); }
+
+    /* ── SECTIONS ── */
+    section {
+      position: relative;
+      z-index: 1;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 5rem 2rem;
+    }
+
+    /* ── HERO ── */
+    .hero {
+      text-align: center;
+      padding-top: 7rem;
+      padding-bottom: 5rem;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(79,110,247,0.1);
+      border: 1px solid rgba(79,110,247,0.3);
+      border-radius: 100px;
+      padding: 0.4rem 1rem;
+      font-size: 0.8rem;
+      color: #8ba3ff;
+      margin-bottom: 2rem;
+      animation: fadeDown 0.6s ease both;
+    }
+
+    .hero h1 {
+      font-family: 'Unbounded', sans-serif;
+      font-size: clamp(2.2rem, 6vw, 4rem);
+      font-weight: 900;
+      line-height: 1.1;
+      margin-bottom: 1.5rem;
+      animation: fadeDown 0.6s ease 0.1s both;
+    }
+
+    .hero h1 span {
+      background: linear-gradient(135deg, #4f6ef7, #a78bfa, #f472b6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-sub {
+      font-size: 1.15rem;
+      color: var(--muted);
+      max-width: 560px;
+      margin: 0 auto 2.5rem;
+      animation: fadeDown 0.6s ease 0.2s both;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      animation: fadeDown 0.6s ease 0.3s both;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: white;
+      text-decoration: none;
+      padding: 0.85rem 2rem;
+      border-radius: 12px;
+      font-weight: 500;
+      font-size: 1rem;
+      transition: transform 0.2s, box-shadow 0.2s;
+      box-shadow: 0 0 30px rgba(79,110,247,0.3);
+    }
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 0 50px rgba(79,110,247,0.5);
+    }
+
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: transparent;
+      color: var(--text);
+      text-decoration: none;
+      padding: 0.85rem 2rem;
+      border-radius: 12px;
+      font-weight: 500;
+      font-size: 1rem;
+      border: 1px solid var(--border);
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .btn-secondary:hover {
+      background: var(--card);
+      border-color: rgba(255,255,255,0.15);
+    }
+
+    /* ── HOW IT WORKS ── */
+    .section-label {
+      font-size: 0.75rem;
+      font-weight: 500;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 0.75rem;
+    }
+
+    .section-title {
+      font-family: 'Unbounded', sans-serif;
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 700;
+      margin-bottom: 3rem;
+      line-height: 1.2;
+    }
+
+    .steps {
+      display: grid;
+      gap: 1.5rem;
+    }
+
+    .step {
+      display: flex;
+      gap: 1.5rem;
+      align-items: flex-start;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.5rem;
+      transition: border-color 0.3s;
+    }
+    .step:hover { border-color: rgba(79,110,247,0.3); }
+
+    .step-num {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 1.8rem;
+      font-weight: 900;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      min-width: 2.5rem;
+      line-height: 1;
+    }
+
+    .step h3 {
+      font-weight: 500;
+      margin-bottom: 0.25rem;
+    }
+
+    .step p { color: var(--muted); font-size: 0.9rem; }
+
+    /* ── PLATFORMS ── */
+    .platforms {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-top: 2rem;
+    }
+
+    .platform-chip {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 100px;
+      padding: 0.5rem 1rem;
+      font-size: 0.9rem;
+    }
+
+    .dot-green { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+
+    /* ── PRICING ── */
+    .pricing-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 600px) {
+      .pricing-grid { grid-template-columns: 1fr; }
+    }
+
+    .plan {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 2rem;
+      position: relative;
+      transition: transform 0.3s, border-color 0.3s;
+    }
+    .plan:hover { transform: translateY(-4px); }
+
+    .plan.featured {
+      border-color: rgba(79,110,247,0.4);
+      background: linear-gradient(135deg, rgba(79,110,247,0.08), rgba(124,58,237,0.08));
+    }
+
+    .plan-badge {
+      position: absolute;
+      top: -12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: white;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding: 0.25rem 0.75rem;
+      border-radius: 100px;
+      white-space: nowrap;
+    }
+
+    .plan-name {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    .plan-price {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 2.5rem;
+      font-weight: 900;
+      margin-bottom: 0.25rem;
+      line-height: 1;
+    }
+
+    .plan-period {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 1.5rem;
+    }
+
+    .plan-features {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    .plan-features li {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-size: 0.9rem;
+      color: var(--text);
+    }
+
+    .plan-features li span.icon { font-size: 1rem; }
+
+    .plan-cta {
+      display: block;
+      text-align: center;
+      margin-top: 1.5rem;
+      padding: 0.75rem;
+      border-radius: 10px;
+      font-weight: 500;
+      font-size: 0.9rem;
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+
+    .plan.featured .plan-cta {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: white;
+      box-shadow: 0 0 20px rgba(79,110,247,0.3);
+    }
+    .plan.featured .plan-cta:hover {
+      box-shadow: 0 0 40px rgba(79,110,247,0.5);
+      transform: translateY(-1px);
+    }
+
+    .plan:not(.featured) .plan-cta {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .plan:not(.featured) .plan-cta:hover {
+      background: var(--card);
+      border-color: rgba(255,255,255,0.15);
+    }
+
+    /* ── LEGAL ── */
+    .legal-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 600px) {
+      .legal-grid { grid-template-columns: 1fr; }
+    }
+
+    .legal-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.5rem;
+    }
+
+    .legal-card h3 {
+      font-weight: 500;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .legal-card p, .legal-card a {
+      font-size: 0.9rem;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .legal-card a {
+      color: #8ba3ff;
+      text-decoration: none;
+    }
+    .legal-card a:hover { text-decoration: underline; }
+
+    /* ── FOOTER ── */
+    footer {
+      position: relative;
+      z-index: 1;
+      border-top: 1px solid var(--border);
+      padding: 3rem 2rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    footer p + p { margin-top: 0.5rem; }
+
+    /* ── DIVIDER ── */
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 0;
+    }
+
+    /* ── ANIMATIONS ── */
+    @keyframes fadeDown {
+      from { opacity: 0; transform: translateY(-16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── TICKER ── */
+    .ticker-wrap {
+      overflow: hidden;
+      background: rgba(79,110,247,0.06);
+      border-top: 1px solid rgba(79,110,247,0.15);
+      border-bottom: 1px solid rgba(79,110,247,0.15);
+      padding: 0.6rem 0;
+      white-space: nowrap;
+    }
+    .ticker {
+      display: inline-flex;
+      gap: 3rem;
+      animation: ticker 20s linear infinite;
+      font-size: 0.8rem;
+      color: #8ba3ff;
+    }
+    @keyframes ticker {
+      from { transform: translateX(0); }
+      to   { transform: translateX(-50%); }
+    }
+  </style>
+</head>
+<body>
+
+<div class="orb orb-1"></div>
+<div class="orb orb-2"></div>
+
+<!-- NAV -->
+<nav>
+  <div class="logo">📉 ЦінаБот</div>
+  <a href="https://t.me/cina_mon_bot" class="nav-cta">Спробувати безкоштовно →</a>
+</nav>
+
+<!-- TICKER -->
+<div class="ticker-wrap">
+  <div class="ticker">
+    <span>Rozetka ✦</span><span>OLX ✦</span><span>Prom.ua ✦</span>
+    <span>Знижки 24/7 ✦</span><span>Без реєстрації ✦</span>
+    <span>Rozetka ✦</span><span>OLX ✦</span><span>Prom.ua ✦</span>
+    <span>Знижки 24/7 ✦</span><span>Без реєстрації ✦</span>
+    <span>Rozetka ✦</span><span>OLX ✦</span><span>Prom.ua ✦</span>
+    <span>Знижки 24/7 ✦</span><span>Без реєстрації ✦</span>
+  </div>
+</div>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-badge">
+    🤖 Telegram-бот · Безкоштовно
+  </div>
+  <h1>Стеж за цінами,<br /><span>поки відпочиваєш</span></h1>
+  <p class="hero-sub">
+    Втомився щодня заходити на Розетку та перевіряти чи впала ціна?
+    ЦінаБот робить це за тебе — 24/7, без вихідних.
+  </p>
+  <div class="hero-actions">
+    <a href="https://t.me/cina_mon_bot" class="btn-primary">
+      ✈️ Відкрити в Telegram
+    </a>
+    <a href="#how" class="btn-secondary">
+      Як це працює ↓
+    </a>
+  </div>
+</section>
+
+<hr class="divider" />
+
+<!-- HOW IT WORKS -->
+<section id="how">
+  <div class="section-label">Простіше хіба що погладити кота</div>
+  <div class="section-title">Три кроки до вигідної покупки</div>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">01</div>
+      <div>
+        <h3>Додай товар</h3>
+        <p>Скопіюй посилання з Rozetka, OLX або Prom.ua і відправ боту. Готово — великий брат почав свою роботу!</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">02</div>
+      <div>
+        <h3>Встанови цільову ціну (опційно)</h3>
+        <p>Хочеш отримати сповіщення тільки коли ціна впаде до конкретної суми? Просто вкажи її.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">03</div>
+      <div>
+        <h3>Отримай сповіщення</h3>
+        <p>Можна йти пити каву. Як тільки ціна знизиться — отримаєш повідомлення з точною сумою та посиланням на товар.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="platforms">
+    <div class="platform-chip"><span class="dot-green"></span> Rozetka</div>
+    <div class="platform-chip"><span class="dot-green"></span> OLX</div>
+    <div class="platform-chip"><span class="dot-green"></span> Prom.ua</div>
+    <div class="platform-chip" style="opacity:.5">🔜 Allo</div>
+    <div class="platform-chip" style="opacity:.5">🔜 Epicentr</div>
+  </div>
+</section>
+
+<hr class="divider" />
+
+<!-- PRICING -->
+<section id="pricing">
+  <div class="section-label">Тарифи</div>
+  <div class="section-title">Просто</div>
+
+  <div class="pricing-grid">
+    <!-- FREE -->
+    <div class="plan">
+      <div class="plan-name">Безкоштовно</div>
+      <div class="plan-price">0₴</div>
+      <div class="plan-period">назавжди</div>
+      <ul class="plan-features">
+        <li><span class="icon">✅</span> До 5 товарів</li>
+        <li><span class="icon">✅</span> Перевірка кожні 12 годин</li>
+        <li><span class="icon">✅</span> Сповіщення при зниженні</li>
+        <li><span class="icon">✅</span> Цільова ціна</li>
+      </ul>
+      <a href="https://t.me/cina_mon_bot" class="plan-cta">Почати безкоштовно</a>
+    </div>
+
+    <!-- PREMIUM -->
+    <div class="plan featured">
+      <div class="plan-badge">⭐ Популярний</div>
+      <div class="plan-name">Premium</div>
+      <div class="plan-price">60₴</div>
+      <div class="plan-period">на місяць</div>
+      <ul class="plan-features">
+        <li><span class="icon">✅</span> <strong>Необмежена</strong> кількість товарів</li>
+        <li><span class="icon">✅</span> Перевірка кожну 2 години</li>
+        <li><span class="icon">✅</span> Пріоритетні сповіщення</li>
+        <li><span class="icon">✅</span> Цільова ціна</li>
+      </ul>
+      <a href="https://t.me/cina_mon_bot" class="plan-cta">Спробувати Premium</a>
+    </div>
+  </div>
+</section>
+
+<hr class="divider" />
+
+<!-- LEGAL -->
+<section id="legal">
+  <div class="section-label">Юридична інформація</div>
+  <div class="section-title">Прозоро</div>
+
+  <div class="legal-grid">
+    <div class="legal-card">
+      <h3>📞 Контакти</h3>
+      <p>
+        Email: <a href="mailto:willy2005@gmail.com">willy2005@gmail.com</a><br />
+        Зворотній зв'язок: <a href="https://t.me/cina_mon_bot">/feedback у боті</a><br /><br />
+        Відповідаємо протягом 24 годин у робочі дні, якщо не закидують шахедами.
+      </p>
+    </div>
+
+    <div class="legal-card">
+      <h3>🔄 Повернення коштів</h3>
+      <p>
+        Повернення протягом <strong style="color:var(--text)">14 днів</strong> з моменту оплати,
+        якщо послуга не надавалась або не відповідає опису.<br /><br />
+        Для повернення — написати на email.
+      </p>
+    </div>
+
+    <div class="legal-card">
+      <h3>💳 Оплата</h3>
+      <p>
+        LiqPay — Visa, Mastercard,<br />
+        Monobank, ПриватБанк.<br /><br />
+        Кошти зараховуються миттєво після підтвердження платежу.
+      </p>
+    </div>
+
+    <div class="legal-card">
+      <h3>🏢 Виконавець</h3>
+      <p>
+        Фізична особа<br />
+        <strong style="color:var(--text)">Желнов Павло Євгенович</strong><br />
+        м. Павлоград, Дніпропетровська обл., Україна<br /><br />
+        Сервіс надається «як є». Точність цін залежить від зовнішніх майданчиків.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <p>© 2026 ЦінаБот — <a href="https://t.me/cina_mon_bot" style="color:#8ba3ff;text-decoration:none">@cina_mon_bot</a></p>
+  <p>Фізична особа Желнов П.Є. · м. Павлоград · <a href="mailto:willy2005@gmail.com" style="color:#8ba3ff;text-decoration:none">willy2005@gmail.com</a></p>
+</footer>
+
+</body>
+</html>
