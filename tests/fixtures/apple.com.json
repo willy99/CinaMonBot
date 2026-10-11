@@ -1,0 +1,10 @@
+{
+  "url": "https://www.apple.com/shop/buy-iphone/iphone-17",
+  "expected_strategy": "json-ld",
+  "expected_currency": "USD",
+  "title": "iPhone 17",
+  "price": 899.0,
+  "fetched_at": "2026-10-10T11:21:07+00:00",
+  "status": 200,
+  "trimmed": true
+}

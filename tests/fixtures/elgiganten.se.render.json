@@ -1,0 +1,11 @@
+{
+  "url": "https://www.elgiganten.se/product/mobiler-tablets-smartklockor/mobiltelefon/iphone-16-5g-smartphone-128gb-black/825094",
+  "expected_strategy": "json-ld",
+  "expected_currency": "SEK",
+  "title": "iPhone 16 – 5G smartphone 128GB Black",
+  "price": "10990.00",
+  "rendered": true,
+  "fetched_at": "2026-10-10T22:44:04+00:00",
+  "seconds": 4.2,
+  "trimmed": true
+}

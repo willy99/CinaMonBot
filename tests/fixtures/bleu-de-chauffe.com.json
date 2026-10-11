@@ -1,0 +1,10 @@
+{
+  "url": "https://www.bleu-de-chauffe.com/en/messenger-bag/1948-leon-messenger-bag-camel-3700716022378.html",
+  "expected_strategy": "microdata",
+  "expected_currency": "EUR",
+  "title": "Léon messenger bag  -  Camel BM",
+  "price": 235.0,
+  "fetched_at": "2026-10-10T11:29:18+00:00",
+  "status": 200,
+  "trimmed": false
+}

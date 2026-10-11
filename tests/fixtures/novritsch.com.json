@@ -1,0 +1,10 @@
+{
+  "url": "https://eu.novritsch.com/product/bbs-bags/",
+  "expected_strategy": "json-ld",
+  "expected_currency": "EUR",
+  "title": "0.20g - 0.32g Premium Novritsch BBs",
+  "price": 8.0,
+  "fetched_at": "2026-10-10T11:29:11+00:00",
+  "status": 200,
+  "trimmed": true
+}

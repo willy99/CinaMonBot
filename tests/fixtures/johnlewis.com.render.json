@@ -1,0 +1,11 @@
+{
+  "url": "https://www.johnlewis.com/apple-airpods-pro-3-with-magsafe-charging-case-usb-c-white/p114325329",
+  "expected_strategy": "json-ld",
+  "expected_currency": "GBP",
+  "title": "Apple AirPods Pro 3 with MagSafe Charging Case (USB-C), White",
+  "price": "219.00",
+  "rendered": true,
+  "fetched_at": "2026-10-10T22:45:03+00:00",
+  "seconds": 3.0,
+  "trimmed": true
+}

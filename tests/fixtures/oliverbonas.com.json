@@ -1,0 +1,10 @@
+{
+  "url": "https://www.oliverbonas.com/homeware/polka-dot-bed-linen-410829",
+  "expected_strategy": "json-ld",
+  "expected_currency": "GBP",
+  "title": "Charcoal Polka Dot Cotton Duvet Cover Set King",
+  "price": 85.0,
+  "fetched_at": "2026-10-10T11:29:20+00:00",
+  "status": 200,
+  "trimmed": true
+}

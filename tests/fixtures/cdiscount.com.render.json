@@ -1,0 +1,11 @@
+{
+  "url": "https://www.cdiscount.com/telephonie/telephone-mobile/apple-iphone-16-128gb-white/f-14404-ip16128white.html",
+  "expected_strategy": "json-ld",
+  "expected_currency": "EUR",
+  "title": "APPLE iPhone 16 128GB White",
+  "price": "999.00",
+  "rendered": true,
+  "fetched_at": "2026-10-10T22:43:49+00:00",
+  "seconds": 2.3,
+  "trimmed": true
+}

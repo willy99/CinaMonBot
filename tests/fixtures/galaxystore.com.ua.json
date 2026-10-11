@@ -1,0 +1,10 @@
+{
+  "url": "https://galaxystore.com.ua/ua/wall-chargers/setevoe-zaryadnoe-ustroystvo-essager-grace-100w-2type-c-2usb-ect2ca-qyb01-z/",
+  "expected_strategy": "microdata",
+  "expected_currency": "UAH",
+  "title": "Мережевий зарядний пристрій ESSAGER Grace 100W (2Type-C + 2USB) ECT2CA-QYB01-Z - Black",
+  "price": 1349.0,
+  "fetched_at": "2026-10-10T11:29:13+00:00",
+  "status": 200,
+  "trimmed": false
+}

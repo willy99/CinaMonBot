@@ -1,0 +1,10 @@
+{
+  "url": "https://www.foxtrot.com.ua/uk/shop/smartfoniy-i-mobilniye-telefoniy-apple-smartfon-iphone-16-plus-128gb-blue.html",
+  "expected_strategy": "json-ld",
+  "expected_currency": "UAH",
+  "title": "Смартфон APPLE iPhone 16 Plus 128GB Ultramarine (MXVX3SX/A)",
+  "price": 45999.0,
+  "fetched_at": "2026-10-10T11:17:15+00:00",
+  "status": 200,
+  "trimmed": true
+}

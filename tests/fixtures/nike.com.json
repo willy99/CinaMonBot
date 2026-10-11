@@ -1,0 +1,10 @@
+{
+  "url": "https://www.nike.com/t/pegasus-premium-mens-road-running-shoes-kWXqW9yR/HQ2592-023",
+  "expected_strategy": "json-ld",
+  "expected_currency": "USD",
+  "title": "Nike Pegasus Premium Men's Road Running Shoes",
+  "price": 220.0,
+  "fetched_at": "2026-10-10T11:21:09+00:00",
+  "status": 200,
+  "trimmed": true
+}

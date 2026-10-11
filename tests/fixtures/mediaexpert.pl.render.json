@@ -1,0 +1,11 @@
+{
+  "url": "https://www.mediaexpert.pl/smartfony-i-zegarki/smartfony/smartfon-apple-iphone-16-5g-black-128gb",
+  "expected_strategy": "json-ld",
+  "expected_currency": "PLN",
+  "title": "Smartfon APPLE iPhone 16 5G 128GB 6.1\" Czarny",
+  "price": "3999.00",
+  "rendered": true,
+  "fetched_at": "2026-10-10T22:43:15+00:00",
+  "seconds": 2.0,
+  "trimmed": true
+}

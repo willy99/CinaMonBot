@@ -1,0 +1,11 @@
+{
+  "url": "https://www.etsy.com/listing/1756455865/handmade-ceramic-mug-with-woman-line-art",
+  "expected_strategy": "json-ld",
+  "expected_currency": "USD",
+  "title": "Handmade Ceramic Mug with Woman Line Art Design ( Design On Two Sides)",
+  "price": "46.00",
+  "rendered": true,
+  "fetched_at": "2026-10-10T22:44:29+00:00",
+  "seconds": 2.4,
+  "trimmed": true
+}

@@ -1,0 +1,11 @@
+{
+  "url": "https://intertop.ua/uk-ua/product/sneakers-nike-9662581",
+  "expected_strategy": "json-ld",
+  "expected_currency": "UAH",
+  "title": "Кросівки NIKE Air Force 1 модель DZ4512-100",
+  "price": "4334.00",
+  "rendered": true,
+  "fetched_at": "2026-10-10T22:42:35+00:00",
+  "seconds": 1.8,
+  "trimmed": true
+}

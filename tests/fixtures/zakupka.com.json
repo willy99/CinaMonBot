@@ -1,0 +1,10 @@
+{
+  "url": "https://zakupka.com/uk/p/1646193193-detskiy-muzykalnyy-telefon-elza/",
+  "expected_strategy": "json-ld",
+  "expected_currency": "UAH",
+  "title": "Дитячий музичний телефон Ельза",
+  "price": 85.0,
+  "fetched_at": "2026-10-10T11:28:52+00:00",
+  "status": 200,
+  "trimmed": true
+}

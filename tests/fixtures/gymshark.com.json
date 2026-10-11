@@ -1,0 +1,10 @@
+{
+  "url": "https://www.gymshark.com/products/gymshark-adapt-x-whitney-leggings-leggings-green-aw26",
+  "expected_strategy": "json-ld",
+  "expected_currency": "USD",
+  "title": "Adapt Solid Leggings",
+  "price": 60.0,
+  "fetched_at": "2026-10-10T11:21:21+00:00",
+  "status": 200,
+  "trimmed": true
+}

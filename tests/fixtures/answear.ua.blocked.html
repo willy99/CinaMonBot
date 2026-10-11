@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAJAAAACQCAMAAADQmBKKAAAAnFBMVEX///8AAAARERHExMT19fVhYWEKCgr4+Pjz8/N2dnbg4OBLS0s4ODgYGBhTU1OMjIwzMzMgICDo6OjOzs7s7OxxcXFYWFgkJCTv7+/c3NzV1dXIyMjCwsKcnJxERESoqKiWlpaRkZFdXV0vLy8sLCwoKCjY2Nijo6ODg4N+fn4/Pz/j4+PR0dG9vb2goKCIiIhra2vKysq3t7etra2pE+LcAAADJElEQVR42u3b2W7iMBSA4eNAj1NnT8jCFrayr23f/92GmYtKoJM2MLFB6vkk7iL5BzsxFzEwxhhrnOxsVfdMbTsSHkyqwWF1ypyNe7ZxstPqMFAPq7J3k2kYobiAUTid7Gwwrzv0PRQk9PxhF8xaHF0U30D3uABziuFlDp00LMCQ94zIIZKydzChPZqJmmYjCdrZE0/U5k1s0MxeobgBrjQXtQNL3MQK2qDTyBM38kagUf9N3OytD9p0fHEHvwO6jPGeIByDJr2ZuMusB1rINd4XhGsJOixCcadwATpMUFTCM1EJJ6BBpxQVIicNxuMgdSJRodRxow0sQcrX/VjCmYz761yQrAE0j97E0H+X8EW++/RVK2ic7ZAjvWzhwvaFLHJsaFoyJwfawhVFhs8TaNqnRa2fFrHWcmoRjaBpARIT9tom/qG8UlcG0DB5ou73FhBa1N1/kkBoeqP3bSAUvoktX23qz8ORmLONAkLDOz1+AOkDDez4CbEwPAWkrkcstwSa1ScGcTtA6oREfB+a1bKox2/9h7rVMhCUVQVlDwp6aQOpPX22oBcO4iAO4iAO4iAO4iAO4iAO4iAO4iAO4iAO4iAO4iAO4iAO4iAO4iAO4iAO4iAO+nVB02d71cKvCvIfFFQWQCo22oPo94fmMZDiuYGgJCIGSSqutQwE9YjjAbgE0gENBHVdIiiVQJCpMBAUO8QorgKCck0EFVNqFHLOlpaBIHoehB+Tv6WJIJhgzSMbYzQT9OkJQr6HK/tcmAlK5oIS7uXFzO5DYSioKAUpDxR8UUEuTAXBKwoSlsEgtqW040FQojAX9Fk5GEauM506boRCGAxSoajBYJBMnywI9t6TBXWyJwuCkfVkQUX2ZEEwiJ4sSB5R1IFoKAjirFZPmZsKgl5ZIygfhcaCINn8vFzGuzdzQZA4+NMh0nbPZBCo1PquxzvaYDYI7KVbvfGHSwnQm1FBGnWDEMkcL93B2e4Nr1kD0EmqoT/H65ww7Uv4Kw5er60VaFYkh9QJIwv/tVjz8nRYSHgsGS/6H6Ph2fIjUVc18uLzu/32788Y+09/ALyjQuOjUaLuAAAAAElFTkSuQmCC">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css?family=Montserrat:400,400i,500,600,700&display=swap&subset=latin-ext" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, maximum-scale=1">
+    <title>ANSWEAR - Site Maintenance</title>
+    <style>
+        .hidden-vars {
+            display: none;
+        }
+
+        body {
+            margin: 0;
+            position: relative;
+            padding: 0;
+            overflow-x: hidden;
+            font-size: 0.875rem;
+            min-height: 100%;
+            box-sizing: border-box;
+            font-family: 'Montserrat', sans-serif;
+            color: #000;
+            background: #fff;
+        }
+
+        h1 {
+            font-size: 20px;
+            font-weight: bold;
+            margin-bottom: 24px;
+            text-align: center;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 24px;
+        }
+
+        .contentWrapper {
+            border: 1px solid #EDEDED;
+            padding: 24px;
+            margin-bottom: 24px;
+            width: 600px;
+            max-width: 90vw;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .contentMessage {
+            white-space: pre-line;
+        }
+
+        .lockData {
+            font-weight: bold;
+        }
+
+        .button {
+            height: 44px;
+            min-width: 150px;
+            padding: 0 32px;
+            cursor: pointer;
+            background: black;
+            color: white;
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            text-decoration: none;
+            margin: 0 auto;
+        }
+
+        #error {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            margin: 0 auto;
+            min-height: 100vh;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            padding: 16px;
+            box-sizing: border-box;
+        }
+
+        @media (min-width: 320px) and (max-width: 767px) {
+            h1 {
+                font-size: 16px;
+            }
+
+            .logo {
+                margin-bottom: 8px;
+            }
+
+            .contentWrapper {
+                padding: 16px;
+                width: 100%;
+            }
+
+            #error {
+                padding: 5px;
+            }
+
+            .contentWrapper {
+                max-width: 85vw;
+            }
+        }
+
+        script {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+<p id="client-ip" class="hidden-vars">109.200.254.214</p>
+<p id="error-ref" class="hidden-vars">0.593ad417.1791631091.b1c0e4f8</p>
+
+<div id="error">
+    <p>Loading deny page content…</p>
+</div>
+
+<script>
+    var LANG_MAP = {"bg":"bg","com":"pl","pl":"pl","cy":"cy","cz":"cz","gr":"gr","hr":"hr","hu":"hu","it":"it","ro":"ro","si":"si","sk":"sk","ua":"ua","eu":"en","us":"en"};
+    var PARTIAL_PREFIX = '403_answear_';
+    var BRAND_SLUG = PARTIAL_PREFIX.replace(/^403_/, '').replace(/_$/, '');
+
+    var isLocal = /^(localhost|127\.0\.0\.1)/.test(location.hostname);
+
+    var base = isLocal
+        ? './deny-partials/'
+        : 'https://cdn.ans-media.com/deny-partials/';
+
+    function normalizeLang(l){ l=(l||'').toLowerCase(); return (l==='eu'||l==='us')?'en':l; }
+
+    function pickLang(hostname) {
+        var params = new URLSearchParams(location.search);
+        var forced = (params.get('lang') || '').toLowerCase();
+        if (forced) return forced;
+
+        if (BRAND_SLUG === 'prm') {
+            var seg = (location.pathname.replace(/^\/+/, '').split('/')[0] || '').toLowerCase();
+            return seg || 'en';
+        }
+
+        var h = (hostname || '').toLowerCase();
+        var parts = h.split('.');
+        var sub = parts[0];
+        var tld = parts[parts.length - 1];
+
+        if (LANG_MAP[sub]) return (LANG_MAP[sub] || '').toLowerCase();
+        if (LANG_MAP[tld]) return (LANG_MAP[tld] || '').toLowerCase();
+
+        return 'en';
+    }
+
+    function applyAndInject(ip, ref){
+        return function(html){
+            html = html.replace(/{{\s*AK_CLIENT_REAL_IP\s*}}/g, ip)
+                .replace(/\%\(\s*AK_CLIENT_REAL_IP\s*\)/g, ip)
+                .replace(/{{\s*AK_REFERENCE_ID\s*}}/g, ref)
+                .replace(/\%\(\s*AK_REFERENCE_ID\s*\)/g, ref);
+            document.getElementById('error').innerHTML = html;
+            return true;
+        };
+    }
+
+    function loadPartial(lang, ip, errorCode) {
+        var cacheBust = (base.startsWith('http') ? ('?t=' + Date.now()) : '');
+        var url = base + PARTIAL_PREFIX + lang + '.html' + cacheBust;
+
+        var noPathSeg = !location.pathname.replace(/^\/+/, '').split('/')[0];
+        var tryPrmCom = (BRAND_SLUG === 'prm') && noPathSeg && normalizeLang(lang) === 'en';
+
+        if (tryPrmCom) {
+            var fallback = base + '403_prm_com.html' + cacheBust;
+            return fetch(fallback)
+                .then(r => r.ok ? r.text() : fetch(url).then(r2 => {
+                    if (!r2.ok) throw new Error('Partial not found');
+
+                    return r2.text();
+                }))
+                .then(applyAndInject(ip, errorCode))
+                .catch(e => { console.error('Load partial failed:', e); });
+        }
+
+        return fetch(url)
+            .then(r => { if (!r.ok) throw new Error('Partial not found'); return r.text(); })
+            .then(applyAndInject(ip, errorCode))
+            .catch(e => { console.error('Load partial failed:', e); });
+    }
+
+    (function() {
+        var clientIP = ((document.getElementById('client-ip') || {}).textContent || '').trim();
+        var errorRef = ((document.getElementById('error-ref') || {}).textContent || '').trim();
+        var lang = pickLang(location.hostname);
+
+        document.documentElement.lang = normalizeLang(lang);
+
+        loadPartial(lang, clientIP, errorRef)
+            .catch(function() {
+                document.documentElement.lang = 'en';
+
+                return loadPartial('en', clientIP, errorRef);
+            });
+    })();
+</script>
+
+</body>
+</html>

@@ -35,13 +35,24 @@ class Settings(BaseSettings):
     PREMIUM_CHECK_INTERVAL_MINUTES: int = 60       # 1 година
     # Головний цикл планувальника (кожні N хвилин)
     SCHEDULER_INTERVAL_MINUTES: int = 15
+    # Антиспам "знову в наявності": повторний RESTOCK по тому ж товару не раніше ніж через N днів
+    # (якщо тільки ціна не стала нижчою, ніж була) — товар, що "мигає" в наявності, не спамить
+    RESTOCK_COOLDOWN_DAYS: int = 7
 
     # ─── Scraping ────────────────────────────────────────────────
     SCRAPE_DELAY_SECONDS: float = 2.0
     REQUEST_TIMEOUT_SECONDS: float = 15.0
     SCRAPE_MAX_RETRIES: int = 3
 
-    # ─── Business ────────────────────────────────────────────────
+    # ─── JS-рендеринг (Playwright, опційно) ──────────────────────
+    # Магазини з render_js=True у реєстрі парсяться через headless Chromium.
+    # Без встановленого Playwright бот працює через httpx і лише попереджає в лог.
+    RENDER_MAX_CONCURRENCY: int = 2          # одночасних сторінок у браузері
+    RENDER_TIMEOUT_SECONDS: int = 35
+    RENDER_FALLBACK: bool = True             # спробувати браузер, якщо httpx дав blocked/parse_failed
+    RENDER_IDLE_CONTEXT_MINUTES: int = 10    # закривати браузер, якщо не було запитів
+    RENDER_BROWSER_CHANNEL: str = "chromium" # "" → легша headless-shell (гірше проходить антиботи)
+
     FREE_TIER_MAX_ITEMS: int = 5
     PREMIUM_PRICE_UAH: int = 60
 
@@ -53,6 +64,17 @@ class Settings(BaseSettings):
     # ─── AI Auto-Healing ────────────────────────────────────
     ANTHROPIC_API_KEY: str = ""
     ADMIN_TELEGRAM_ID: int = 431742835
+
+    # ─── Admin dashboard (python admin.py) ───────────────────────
+    ADMIN_PORT: int = 8088
+    ADMIN_HOST: str = "127.0.0.1"          # 0.0.0.0 лише якщо є Tailscale/VPN або reverse proxy
+    # Секрет для сесій дашборду. Порожній → генерується при старті (сесії злітають після рестарту).
+    ADMIN_STORAGE_SECRET: str = ""
+    ADMIN_SESSION_HOURS: int = 12
+    ADMIN_2FA_ENABLED: bool = True         # код у Telegram після пароля
+    ADMIN_2FA_CODE_TTL_SECONDS: int = 300
+    ADMIN_LOGIN_MAX_ATTEMPTS: int = 5      # потім блок на ADMIN_LOGIN_LOCK_MINUTES
+    ADMIN_LOGIN_LOCK_MINUTES: int = 15
 
     # ─── Payments (необов'язково на старті) ──────────────────────
     LIQPAY_PUBLIC_KEY: str = ""

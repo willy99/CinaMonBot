@@ -1,0 +1,19 @@
+# Покриття тестами: ./run.sh test cov  (pytest-cov підхоплює цей файл автоматично)
+[run]
+branch = True
+omit =
+    tests/*
+    venv/*
+    scripts/*
+    debug/*
+    */__pycache__/*
+
+[report]
+# Поріг: нижче — ./run.sh test cov падає (не додавай код без тестів)
+fail_under = 85
+skip_empty = True
+precision = 1
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+    if __name__ == .__main__.:

@@ -1,0 +1,11 @@
+{
+  "url": "https://shoper.com.ua/katalog/mobila/samsung/samsung-G973FD_Galaxy_S10_Duos_128GB_Green-1853535.html",
+  "expected_strategy": "json-ld",
+  "expected_currency": "UAH",
+  "title": "Смартфон Samsung G973FD Galaxy S10 Duos 128GB Green",
+  "price": "12403.00",
+  "rendered": true,
+  "fetched_at": "2026-10-10T22:42:50+00:00",
+  "seconds": 3.9,
+  "trimmed": true
+}

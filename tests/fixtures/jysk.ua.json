@@ -1,0 +1,11 @@
+{
+  "url": "https://jysk.ua/spalnya/matraci/pruzhinni-matraci/matrats-pruzhynnyy-80x200sm-tenna-vysokyy-rp",
+  "expected_strategy": "json-ld",
+  "expected_currency": "UAH",
+  "title": "Матрац пружинний 80x200см TENNA високий р.п.",
+  "price": 16999.0,
+  "fetched_at": "2026-10-10T11:28:55+00:00",
+  "status": 200,
+  "trimmed": true,
+  "note": "JSON-LD = ProductGroup; назва/ціна поточного товару — у hasVariant[0] (name збігається з h1); решта варіантів мають price у вигляді '18999 грн.'"
+}

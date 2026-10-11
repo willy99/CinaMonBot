@@ -1,0 +1,10 @@
+{
+  "url": "https://www.morele.net/dysk-zewnetrzny-hdd-toshiba-canvio-basics-exclusive-1tb-czarny-hdtb510mk3aa-600016107/",
+  "expected_strategy": "json-ld",
+  "expected_currency": "PLN",
+  "title": "Dysk zewnętrzny HDD Toshiba",
+  "price": 369.99,
+  "fetched_at": "2026-10-10T11:19:23+00:00",
+  "status": 200,
+  "trimmed": true
+}

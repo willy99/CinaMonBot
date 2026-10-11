@@ -1,0 +1,11 @@
+{
+  "url": "https://quality.in.ua/televizor-tcl-98p745/",
+  "expected_strategy": "microdata",
+  "expected_currency": "UAH",
+  "title": "Телевізор TCL 98P745",
+  "price": "95000.00",
+  "rendered": true,
+  "fetched_at": "2026-10-10T22:53:31+00:00",
+  "seconds": 4.1,
+  "trimmed": true
+}

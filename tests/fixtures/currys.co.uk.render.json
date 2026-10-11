@@ -1,0 +1,11 @@
+{
+  "url": "https://www.currys.co.uk/products/apple-refurbished-airpods-4-with-active-noise-cancellation-white-very-good-condition-10287145.html",
+  "expected_strategy": "json-ld",
+  "expected_currency": "GBP",
+  "title": "APPLE Refurbished AirPods 4 with Active Noise Cancellation - White (Very Good Condition)",
+  "price": "139.00",
+  "rendered": true,
+  "fetched_at": "2026-10-10T22:52:13+00:00",
+  "seconds": 2.9,
+  "trimmed": true
+}

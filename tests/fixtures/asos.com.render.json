@@ -1,0 +1,11 @@
+{
+  "url": "https://www.asos.com/nike/nike-air-force-1-07-trainers-in-triple-black/prd/202329454",
+  "expected_strategy": "json-ld",
+  "expected_currency": "USD",
+  "title": "Nike Air Force 1 '07 trainers in triple black",
+  "price": "174.00",
+  "rendered": true,
+  "fetched_at": "2026-10-10T22:45:07+00:00",
+  "seconds": 3.4,
+  "trimmed": true
+}

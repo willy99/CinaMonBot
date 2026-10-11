@@ -1,13 +1,11 @@
 """
-Точка входу. Один процес — бот + планувальник.
+Telegram-бот + планувальник перевірки цін. Один процес.
 
 Запуск:
-    python main.py
+    python bot.py          # напряму
+    ./run.sh               # разом з адмінкою через pm2 (bot.py + admin.py)
 
-Або якщо є .env файл з різними налаштуваннями:
-    cp .env.example .env
-    # заповни BOT_TOKEN і DATABASE_URL
-    python main.py
+Перед першим запуском: cp .env.example .env і заповнити BOT_TOKEN.
 """
 import asyncio
 import logging
@@ -18,11 +16,13 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand
 
 from app.config import settings
 from app.database.session import init_db, close_engine
 from app.bot.handlers.main import router
 from app.scheduler.price_checker import setup_scheduler, scheduler
+from app.i18n import BOT_COMMANDS, DEFAULT_LANG
 
 # ─── Logging setup ───────────────────────────────────────────────
 
@@ -49,12 +49,24 @@ async def on_startup(bot: Bot) -> None:
     await init_db()
     logger.info("database_ready")
 
+    # Приводимо статуси трекерів у відповідність до ліміту (старі дані, зміна правил)
+    from app.services.limits import sync_all_free_limits
+    await sync_all_free_limits()
+
     # Запускаємо планувальник перевірки цін
     setup_scheduler(bot)
     logger.info("scheduler_ready")
 
     # Видаляємо вебхук якщо був встановлений раніше
     await bot.delete_webhook(drop_pending_updates=True)
+
+    # Меню команд: окремий список для кожної мови + дефолт (uk)
+    for lang, commands in BOT_COMMANDS.items():
+        cmds = [BotCommand(command=c, description=d) for c, d in commands]
+        await bot.set_my_commands(cmds, language_code=lang)
+        if lang == DEFAULT_LANG:
+            await bot.set_my_commands(cmds)
+    logger.info("bot_commands_set", languages=list(BOT_COMMANDS))
 
     me = await bot.get_me()
     logger.info("bot_ready", username=me.username)
@@ -63,6 +75,11 @@ async def on_startup(bot: Bot) -> None:
 async def on_shutdown(bot: Bot) -> None:
     logger.info("shutting_down")
     scheduler.shutdown(wait=False)
+    try:
+        from app.services.scrapers.render import close_renderer
+        await close_renderer()
+    except Exception as e:  # noqa: BLE001 — браузер міг і не запускатися
+        logger.warning("renderer_close_failed", error=str(e))
     await close_engine()
 
 

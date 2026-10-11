@@ -1,0 +1,11 @@
+{
+  "url": "https://comfy.ua/ua/smartfon-apple-iphone-16-128gb-black.html",
+  "expected_strategy": "json-ld",
+  "expected_currency": "UAH",
+  "title": "Смартфон Apple iPhone 16 128Gb Black",
+  "price": "40499.00",
+  "rendered": true,
+  "fetched_at": "2026-10-10T22:42:14+00:00",
+  "seconds": 2.8,
+  "trimmed": true
+}

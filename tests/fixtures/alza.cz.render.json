@@ -1,0 +1,11 @@
+{
+  "url": "https://www.alza.cz/iphone-16-128gb-cerna-d12541617.htm",
+  "expected_strategy": "json-ld",
+  "expected_currency": "CZK",
+  "title": "iPhone 16 128GB černá",
+  "price": "22990.00",
+  "rendered": true,
+  "fetched_at": "2026-10-10T22:43:43+00:00",
+  "seconds": 2.4,
+  "trimmed": true
+}

@@ -1,0 +1,10 @@
+{
+  "url": "https://aromateque.com.ua/maison-francis-kurkdjian-oud-velvet-mood-ra141681-comb-70-ml",
+  "expected_strategy": "json-ld",
+  "expected_currency": "UAH",
+  "title": "Oud Velvet Mood 70мл",
+  "price": 18890.0,
+  "fetched_at": "2026-10-10T11:19:08+00:00",
+  "status": 200,
+  "trimmed": true
+}

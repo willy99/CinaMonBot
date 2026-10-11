@@ -1,0 +1,11 @@
+{
+  "url": "https://www.idealo.de/preisvergleich/OffersOfProduct/204004898_-promaster-mechanical-gmt-citizen-watches.html",
+  "expected_strategy": "json-ld",
+  "expected_currency": "EUR",
+  "title": "Citizen Promaster Mechanical GMT",
+  "price": "636.00",
+  "rendered": true,
+  "fetched_at": "2026-10-10T22:43:43+00:00",
+  "seconds": 3.4,
+  "trimmed": true
+}

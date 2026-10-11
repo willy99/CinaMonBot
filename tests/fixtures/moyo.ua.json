@@ -1,0 +1,10 @@
+{
+  "url": "https://www.moyo.ua/ua/noutbuk_acer_extensa_exo15-41_nx_elheu_002/853624.html",
+  "expected_strategy": "microdata",
+  "expected_currency": "UAH",
+  "title": "Ноутбук ACER Extensa 15 EXO15-41 (NX.ELHEU.002)",
+  "price": 28999.0,
+  "fetched_at": "2026-10-10T11:28:44+00:00",
+  "status": 200,
+  "trimmed": true
+}

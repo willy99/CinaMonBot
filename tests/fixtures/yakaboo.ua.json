@@ -1,0 +1,10 @@
+{
+  "url": "https://www.yakaboo.ua/ua/alhimizovani-3452388.html",
+  "expected_strategy": "json-ld",
+  "expected_currency": "UAH",
+  "title": "Алхімізовані",
+  "price": 449.0,
+  "fetched_at": "2026-10-10T11:19:06+00:00",
+  "status": 200,
+  "trimmed": true
+}

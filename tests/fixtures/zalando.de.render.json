@@ -1,0 +1,11 @@
+{
+  "url": "https://www.zalando.de/nike-sportswear-air-force-1-07-unisex-sneaker-low-blackwhite-ni115o070-q11.html",
+  "expected_strategy": "json-ld",
+  "expected_currency": "EUR",
+  "title": "AIR FORCE 1 '07 - Low-Top-Sneaker - black/white",
+  "price": "83.95",
+  "rendered": true,
+  "fetched_at": "2026-10-10T22:43:23+00:00",
+  "seconds": 5.4,
+  "trimmed": true
+}

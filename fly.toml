@@ -1,0 +1,14 @@
+app = "priceguard-bot"
+primary_region = "fra"
+
+[processes]
+  app = "python bot.py"
+
+[deploy]
+  strategy = "immediate"
+
+# ВАЖЛИВО: тільки одна машина
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

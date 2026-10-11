@@ -1,0 +1,10 @@
+{
+  "url": "https://kasta.ua/uk/product/18797508:33126731/",
+  "expected_strategy": "json-ld",
+  "expected_currency": "UAH",
+  "title": "Вологі серветки розміру XXL для прибирання, 100 шт Purfix (300545876)",
+  "price": 175.0,
+  "fetched_at": "2026-10-10T11:17:39+00:00",
+  "status": 200,
+  "trimmed": true
+}

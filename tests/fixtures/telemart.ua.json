@@ -1,0 +1,10 @@
+{
+  "url": "https://telemart.ua/ua/products/asus-rt-ax52/",
+  "expected_strategy": "json-ld",
+  "expected_currency": "UAH",
+  "title": "Wi-Fi роутер Asus RT-AX52 / Wi-Fi 6 / АХ1800 / 1000 Mbits / Mesh",
+  "price": 2699.0,
+  "fetched_at": "2026-10-10T11:17:36+00:00",
+  "status": 200,
+  "trimmed": true
+}

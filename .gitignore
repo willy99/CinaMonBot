@@ -11,3 +11,15 @@ pyproject.toml
 __pycache__/
 .DS_Store
 /venv/
+
+# NiceGUI session storage (admin dashboard)
+.nicegui/
+logs/
+
+# База даних (SQLite) та IDE
+*.db
+*.db-shm
+*.db-wal
+.idea/
+.coverage
+htmlcov/

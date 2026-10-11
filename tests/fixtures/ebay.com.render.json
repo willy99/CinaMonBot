@@ -1,0 +1,11 @@
+{
+  "url": "https://www.ebay.com/itm/296110312917",
+  "expected_strategy": "json-ld",
+  "expected_currency": "USD",
+  "title": "Apple iPhone 15 128GB Factory Unlocked AT&T T-Mobile Verizon Excellent Condition",
+  "price": "422.95",
+  "rendered": true,
+  "fetched_at": "2026-10-10T22:44:24+00:00",
+  "seconds": 2.8,
+  "trimmed": true
+}

@@ -25,6 +25,10 @@ from app.database.models import (
     TrackerStatus, PriceEventType, NotificationStatus,
 )
 from app.services.scrapers.scraper import ScraperFactory, ScrapeError
+from app.services.scrapers.registry import platform_for, platform_name
+from app.services.scrapers.scrape_log import prune_scrape_log
+from app.i18n import t, fmt_money, fmt_percent
+from app.scheduler.digest import send_weekly_digests
 
 logger = structlog.get_logger(__name__)
 
@@ -40,18 +44,118 @@ def setup_scheduler(bot) -> None:
     Реєструємо задачі і стартуємо scheduler.
     Викликається один раз при запуску бота.
     """
+    # Перевірка закінчення Premium — раз на годину
+    scheduler.add_job(
+        handle_expired_premiums,
+        trigger="interval",
+        hours=1,
+        args=[bot],
+        id="handle_expired_premiums",
+        replace_existing=True,
+        next_run_time=datetime.now(timezone.utc) + timedelta(minutes=2),
+    )
+
     scheduler.add_job(
         dispatch_price_checks,
         trigger="interval",
-        minutes=settings.SCHEDULER_INTERVAL_MINUTES,
+        minutes=5,   # НОВЕ: кожні 5 хв замість SCHEDULER_INTERVAL_MINUTES для рівномірності
         args=[bot],
         id="dispatch_price_checks",
         replace_existing=True,
         # Перший запуск через 1 хвилину після старту
         next_run_time=datetime.now(timezone.utc) + timedelta(minutes=1),
     )
+    # Чистимо журнал парсингу (scrape_log) — щодня о 04:00 за Києвом, лишаємо 30 днів
+    scheduler.add_job(
+        prune_scrape_log,
+        trigger="cron",
+        hour=4,
+        id="prune_scrape_log",
+        replace_existing=True,
+    )
+    # Щотижневий дайджест "що подешевшало" — щопонеділка о 10:00 за Києвом
+    # (шлеться лише тим, хто не вимкнув digest_enabled, і лише коли щось подешевшало)
+    scheduler.add_job(
+        send_weekly_digests,
+        trigger="cron",
+        day_of_week="mon",
+        hour=10,
+        args=[bot],
+        id="weekly_digest",
+        replace_existing=True,
+    )
     scheduler.start()
-    logger.info("scheduler_started", interval_minutes=settings.SCHEDULER_INTERVAL_MINUTES, max_per_run=MAX_CHECKS_PER_RUN)
+    logger.info("scheduler_started", interval_minutes=5, max_per_run=MAX_CHECKS_PER_RUN)
+
+
+async def handle_expired_premiums(bot) -> None:
+    """
+    Знаходить юзерів у яких щойно закінчився Premium
+    і призупиняє трекери понад ліміт безкоштовного плану.
+    Не видаляє — лише ставить PAUSED.
+    """
+    from sqlalchemy import select
+    from datetime import datetime, timezone
+    from app.database.models import User, SubscriptionTier
+    from app.config import settings
+
+    async with get_session() as session:
+        now = datetime.now(timezone.utc)
+
+        # Знаходимо юзерів у яких premium_until вже минув але tier ще "premium"
+        stmt = select(User).where(
+            User.tier == SubscriptionTier.PREMIUM,
+            User.premium_until < now,
+        )
+        expired_users = (await session.execute(stmt)).scalars().all()
+
+        for user in expired_users:
+            # Переводимо на free
+            user.tier = SubscriptionTier.FREE
+            user.premium_until = None
+            logger.info("premium_expired", user_id=user.id, telegram_id=user.telegram_id)
+
+    # Для кожного expired user — призупиняємо зайві трекери
+    for user in expired_users:
+        await _pause_excess_trackers(user, bot)
+
+    # Страховка раз на годину: якщо десь стан розійшовся з правилом — вирівнюємо мовчки
+    from app.services.limits import sync_all_free_limits
+    await sync_all_free_limits()
+
+
+async def _pause_excess_trackers(user, bot) -> None:
+    """
+    Після закінчення Premium: активними лишаються FREE_TIER_MAX_ITEMS найстаріших,
+    решта → PAUSED_LIMIT (через sync_free_limit). Повідомляє юзера, якщо щось поставлено на паузу.
+    """
+    from app.config import settings
+    from app.services.limits import sync_free_limit
+
+    _, paused = await sync_free_limit(user.id)
+    if not paused:
+        return  # все в межах ліміту
+
+    lang = user.lang
+    paused_titles = [(tr.title or t(lang, "item"))[:40] for tr in paused]
+    logger.info("trackers_paused_on_expiry", user_id=user.id, paused_count=len(paused))
+
+    # Повідомляємо юзера
+    if not user.is_blocked and bot:
+        paused_list = "\n".join(f"  ⏸ {title}" for title in paused_titles)
+        msg_text = t(
+            lang, "premium_expired",
+            n=settings.FREE_TIER_MAX_ITEMS,
+            paused=paused_list,
+        )
+        try:
+            await bot.send_message(
+                chat_id=user.telegram_id,
+                text=msg_text,
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error("expiry_notify_failed", error=str(e))
 
 
 async def dispatch_price_checks(bot) -> None:
@@ -88,6 +192,8 @@ async def dispatch_price_checks(bot) -> None:
             if now >= last + timedelta(minutes=interval):
                 to_check.append(tracker)
 
+        # НОВЕ: зупиняємось як тільки набрали ліміт
+        # Решта трекерів дочекається наступного запуску через 5 хвилин
         if len(to_check) >= MAX_CHECKS_PER_RUN:
             break
 
@@ -115,6 +221,14 @@ async def dispatch_price_checks(bot) -> None:
     logger.info("dispatch_finished", checked=len(to_check))
 
 
+_PLATFORM_STATUS_UA = {
+    "verified": "перевірено",
+    "experimental": "експериментально",
+    "needs_js": "потрібен JS",
+    "blocked": "блокує запити",
+}
+
+
 async def _check_domain_health(bot, results_by_domain: dict[str, list[bool]]) -> None:
     admin_id = settings.ADMIN_TELEGRAM_ID
     if not admin_id:
@@ -128,16 +242,22 @@ async def _check_domain_health(bot, results_by_domain: dict[str, list[bool]]) ->
         error_rate = fails / total
         if error_rate >= 0.5:
             logger.warning("domain_high_error_rate", domain=domain, error_rate=error_rate)
+            platform = platform_for(domain)
+            status_text = (
+                f"{_PLATFORM_STATUS_UA.get(platform.status, platform.status)}"
+                + (f" · {platform.strategy}" if platform.strategy else "")
+                if platform else "немає в реєстрі (універсальний парсер)"
+            )
             try:
                 await bot.send_message(
                     chat_id=admin_id,
                     text=(
-                        f"🚨 <b>Проблема з парсером!</b>\n\n"
+                        f"🚨 <b>Проблема з парсером: {platform_name(domain)}</b>\n\n"
                         f"🌐 Домен: <code>{domain}</code>\n"
+                        f"📒 Статус у реєстрі: {status_text}\n"
                         f"❌ Помилок: {fails}/{total} ({error_rate:.0%})\n\n"
                         f"⚙️ Запущено автовідновлення через Claude AI.\n"
-                        f"Якщо не зникне — перевір вручну:\n"
-                        f"<code>python debug/debug_rozetka.py</code>"
+                        f"Якщо не зникне — дивись /platforms у дашборді."
                     ),
                     parse_mode="HTML",
                 )
@@ -180,6 +300,8 @@ async def check_single_price(tracker: PriceTracker, bot) -> None:
 
         # Оновлюємо дані трекера
         db_tracker.current_price = result.price
+        if result.currency:
+            db_tracker.currency = result.currency.upper()
         db_tracker.is_available = result.is_available
         db_tracker.title = result.title
         db_tracker.image_url = result.image_url
@@ -204,6 +326,20 @@ async def check_single_price(tracker: PriceTracker, bot) -> None:
         )
 
         if event:
+            # Налаштування трекера і антиспам: придушене сповіщення лише логуємо,
+            # рядок Notification НЕ створюємо (юзер нічого не отримував)
+            reason = _suppression_reason(
+                tracker=db_tracker, event=event, old_price=old_price, new_price=result.price, now=now,
+            )
+            if reason:
+                logger.info(
+                    "notification_suppressed",
+                    tracker_id=db_tracker.id,
+                    event_type=str(event),
+                    reason=reason,
+                )
+                return
+
             # Відправляємо сповіщення
             await _send_notification(
                 bot=bot,
@@ -213,6 +349,38 @@ async def check_single_price(tracker: PriceTracker, bot) -> None:
                 old_price=old_price,
                 new_price=result.price,
             )
+
+
+def _suppression_reason(
+    tracker: PriceTracker,
+    event: PriceEventType,
+    old_price: Decimal | None,
+    new_price: Decimal | None,
+    now: datetime,
+) -> str | None:
+    """
+    Чому НЕ слати сповіщення про подію (None → слати):
+    - "muted_restock"   — юзер вимкнув сповіщення про наявність по цьому товару
+    - "muted_drop"      — юзер вимкнув сповіщення про зниження/ціль по цьому товару
+    - "restock_cooldown"— RESTOCK уже надсилали менше ніж RESTOCK_COOLDOWN_DAYS днів тому
+                          (товар "мигає" в наявності); виняток — ціна стала нижчою, ніж була
+    """
+    if event == PriceEventType.RESTOCK:
+        if not tracker.notify_restock:
+            return "muted_restock"
+        last = tracker.last_restock_notified_at
+        if last is not None:
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            cheaper = bool(old_price and new_price and new_price < old_price)
+            if now - last < timedelta(days=settings.RESTOCK_COOLDOWN_DAYS) and not cheaper:
+                return "restock_cooldown"
+        return None
+
+    if event in (PriceEventType.DECREASE, PriceEventType.TARGET_REACHED):
+        if not tracker.notify_drop:
+            return "muted_drop"
+    return None
 
 
 def _detect_event(
@@ -257,42 +425,62 @@ async def _send_notification(
     if not user or user.is_blocked:
         return
 
-    # Формуємо текст залежно від типу події
-    title_short = (tracker.title or "Товар")[:60]
+    # Формуємо текст залежно від типу події — мовою і валютою юзера/трекера
+    lang = user.lang
+    cur = tracker.currency
+    title_short = (tracker.title or t(lang, "item"))[:60]
 
     if event == PriceEventType.RESTOCK:
-        text = (
-            f"✅ <b>З'явився в наявності!</b>\n\n"
-            f"📦 {title_short}\n"
-            f"💰 Ціна: <b>{new_price:,.0f} грн</b>\n\n"
-            f"🔗 <a href='{tracker.canonical_url}'>Перейти до товару</a>"
+        text = t(
+            lang, "notif_restock",
+            title=title_short,
+            price=fmt_money(new_price, cur, lang),
+            url=tracker.canonical_url,
+        )
+    elif event == PriceEventType.TARGET_REACHED and tracker.target_percent:
+        # Ціль у відсотках ("впаде на 15%") — показуємо відсоток і базову ціну
+        text = t(
+            lang, "notif_target_percent",
+            pct=fmt_percent(tracker.target_percent, lang),
+            title=title_short,
+            price=fmt_money(new_price, cur, lang),
+            baseline=fmt_money(tracker.baseline_price, cur, lang),
+            target=fmt_money(tracker.target_price, cur, lang),
+            url=tracker.canonical_url,
         )
     elif event == PriceEventType.TARGET_REACHED:
-        text = (
-            f"🎯 <b>Ціна досягла твоєї цілі!</b>\n\n"
-            f"📦 {title_short}\n"
-            f"💰 Ціна зараз: <b>{new_price:,.0f} грн</b>\n"
-            f"🎯 Твоя ціль: {tracker.target_price:,.0f} грн\n\n"
-            f"🔗 <a href='{tracker.canonical_url}'>Купити зараз</a>"
+        text = t(
+            lang, "notif_target",
+            title=title_short,
+            price=fmt_money(new_price, cur, lang),
+            target=fmt_money(tracker.target_price, cur, lang),
+            url=tracker.canonical_url,
         )
     else:  # DECREASE
         diff = old_price - new_price if (old_price and new_price) else Decimal(0)
         pct = int(diff / old_price * 100) if old_price else 0
-        text = (
-            f"📉 <b>Ціна знизилась на {pct}%!</b>\n\n"
-            f"📦 {title_short}\n"
-            f"💰 Було: <s>{old_price:,.0f} грн</s>\n"
-            f"💚 Стало: <b>{new_price:,.0f} грн</b>\n"
-            f"💾 Економія: {diff:,.0f} грн\n\n"
-            f"🔗 <a href='{tracker.canonical_url}'>Перейти до товару</a>"
+        text = t(
+            lang, "notif_decrease",
+            pct=pct,
+            title=title_short,
+            old=fmt_money(old_price, cur, lang),
+            new=fmt_money(new_price, cur, lang),
+            diff=fmt_money(diff, cur, lang),
+            url=tracker.canonical_url,
         )
 
+    # Кнопка "🔕 Не сповіщати…" для саме цього типу події + "⚙️ Налаштування"
+    from app.bot.keyboards import MUTE_KIND_BY_EVENT, notification_keyboard
+    keyboard = notification_keyboard(lang, MUTE_KIND_BY_EVENT.get(event, "drop"), tracker.id)
+
     try:
+        # Єдиний адресат — власник трекера (tracker.user_id → User.telegram_id)
         msg = await bot.send_message(
             chat_id=user.telegram_id,
             text=text,
             parse_mode="HTML",
             disable_web_page_preview=False,
+            reply_markup=keyboard,
         )
         session.add(Notification(
             user_id=user.id,
@@ -303,7 +491,10 @@ async def _send_notification(
             status=NotificationStatus.SENT,
             telegram_message_id=msg.message_id,
         ))
-        logger.info("notification_sent", event=event, user=user.telegram_id)
+        if event == PriceEventType.RESTOCK:
+            # Точка відліку для антиспаму RESTOCK (див. _suppression_reason)
+            tracker.last_restock_notified_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        logger.info("notification_sent", event_type=str(event), user=user.telegram_id)
 
     except Exception as e:
         # Якщо юзер заблокував бота

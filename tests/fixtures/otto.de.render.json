@@ -1,0 +1,11 @@
+{
+  "url": "https://www.otto.de/p/bosch-waschmaschine-serie-6-wgg256z41-10-kg-1600-u-min-2043083677/",
+  "expected_strategy": "json-ld",
+  "expected_currency": "EUR",
+  "title": "BOSCH Waschmaschine Serie 6 WGG256Z41, 10 kg, 1600 U/min",
+  "price": "649.00",
+  "rendered": true,
+  "fetched_at": "2026-10-10T22:43:25+00:00",
+  "seconds": 3.3,
+  "trimmed": true
+}

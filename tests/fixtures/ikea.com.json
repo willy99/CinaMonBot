@@ -1,0 +1,10 @@
+{
+  "url": "https://www.ikea.com/us/en/p/raskog-utility-cart-white-30586783/",
+  "expected_strategy": "json-ld",
+  "expected_currency": "USD",
+  "title": "RÅSKOG Utility cart - white 13 3/4x17 3/4x30 3/8 \"",
+  "price": 39.99,
+  "fetched_at": "2026-10-10T11:21:04+00:00",
+  "status": 200,
+  "trimmed": true
+}

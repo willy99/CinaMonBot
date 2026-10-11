@@ -1,0 +1,10 @@
+{
+  "url": "https://apteka911.ua/ua/shop/mukaltin-tabl-50mg-30-p12645",
+  "expected_strategy": "json-ld",
+  "expected_currency": "UAH",
+  "title": "Мукалтин табл. 50мг №30",
+  "price": 70.5,
+  "fetched_at": "2026-10-10T11:17:52+00:00",
+  "status": 200,
+  "trimmed": true
+}
