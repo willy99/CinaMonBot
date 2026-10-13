@@ -1,13 +1,13 @@
 # Прямі залежності ЦінаБот. Lock-файл з хешами — requirements.txt, його генерує ./run.sh lock:
-#   uv pip compile requirements.in --generate-hashes --python-version 3.11 -o requirements.txt
+#   uv pip compile requirements.in --generate-hashes --python-version 3.14 -o requirements.txt
 # Встановлення: venv/bin/pip install --require-hashes -r requirements.txt
 # ─── Bot ─────────────────────────────────────────────────────────
 aiogram==3.31.0           # 3.7.0 був несумісний з pydantic/aiohttp, які тягне nicegui 3.18 (pip check)
 
 # ─── Database ────────────────────────────────────────────────────
-sqlalchemy[asyncio]==2.0.30
+sqlalchemy[asyncio]==2.0.54
 aiosqlite==0.20.0          # async SQLite driver
-asyncpg==0.29.0            # async PostgreSQL driver (якщо використовуєш Postgres)
+asyncpg==0.32.0            # async PostgreSQL driver (якщо використовуєш Postgres)
 alembic==1.13.1            # міграції БД
 
 # ─── Scheduler (заміна Celery) ───────────────────────────────────

@@ -21,7 +21,7 @@ PY=./venv/bin/python
 APPS="cinabot cinabot-admin cinabot-backup cinabot-health"
 
 check() {
-  [[ -x "$PY" ]] || { echo "Немає venv: python3.11 -m venv venv && venv/bin/pip install --require-hashes -r requirements.txt"; exit 1; }
+  [[ -x "$PY" ]] || { echo "Немає venv: python3.14 -m venv venv && venv/bin/pip install --require-hashes -r requirements.txt"; exit 1; }
   [[ -f .env ]]   || { echo "Немає .env: cp .env.example .env і заповнити BOT_TOKEN"; exit 1; }
   grep -q '^ADMIN_STORAGE_SECRET=.\+' .env || echo "⚠️  ADMIN_STORAGE_SECRET порожній у .env — сесії адмінки злетять після рестарту"
   mkdir -p logs
@@ -99,7 +99,7 @@ case "${1:-start}" in
     ;;
   lock)
     command -v uv >/dev/null || { echo "Немає uv: brew install uv"; exit 1; }
-    uv pip compile requirements.in --generate-hashes --python-version 3.11 -o requirements.txt
+    uv pip compile requirements.in --generate-hashes --python-version 3.14 -o requirements.txt
     echo "Далі: venv/bin/pip install --require-hashes -r requirements.txt && ./run.sh test && ./run.sh audit"
     ;;
   *)

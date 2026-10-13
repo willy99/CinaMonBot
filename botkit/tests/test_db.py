@@ -93,6 +93,33 @@ async def test_healthcheck_debounced_admin_only(kit, monkeypatch):
     assert "знову працює" in rec.telegram()[-1]
 
 
+async def test_healthcheck_repeats_less_often_new_kind_at_once(kit, monkeypatch):
+    """13.10: УЗ лежала годинами — «uz на паузі вже N-й раз» щогодини. Тепер 1 год, 2 год, 4 год…;
+    новий вид проблеми (підтверджений другою перевіркою) — одразу."""
+    monkeypatch.setattr(hc, "STATE_FILE", kit.root / "state.json")
+    problems = ["uz на паузі вже 5-й раз (X)"]
+
+    async def fake_problems(client):
+        return list(problems)
+    monkeypatch.setattr(hc, "_problems", fake_problems)
+    rec = _Rec()
+    sent_at = []
+    async with rec.client() as c:
+        for minute in range(0, 9 * 60, 5):                            # 9 годин перевірок кожні 5 хв
+            problems[0] = f"uz на паузі вже {5 + minute // 30}-й раз (X)"
+            before = len(rec.telegram())
+            await hc.check(c, now=minute * 60.0)
+            if len(rec.telegram()) > before:
+                sent_at.append(minute)
+    assert sent_at == [10, 70, 190, 430]                              # +1 год, +2 год, +4 год
+    async with rec.client() as c:
+        problems.append("планувальник бота не тікав 900 с")
+        await hc.check(c, now=(9 * 60 + 5) * 60.0)
+        assert len(rec.telegram()) == 4                               # новий вид — ще одна перевірка
+        await hc.check(c, now=(9 * 60 + 10) * 60.0)
+    assert len(rec.telegram()) == 5 and "не тікав" in rec.telegram()[-1]
+
+
 async def test_backup_restorable_and_pruned(kit):
     async with kit.get_session() as s:
         s.add(kit.models.User(telegram_id=555))

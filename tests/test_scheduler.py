@@ -123,6 +123,46 @@ def test_detect_event(old, new, target, old_av, new_av, expected):
                             old_available=old_av, new_available=new_av) == expected
 
 
+@pytest.mark.parametrize("old, new, expected", [
+    (D("90"), D("90"), None),                                   # ціна стоїть під ціллю — повтору немає
+    (D("95"), D("90"), PriceEventType.DECREASE),                # ще нижче під ціллю: звичайне падіння ≥3%
+    (D("95"), D("94"), None),                                   # ще нижче, але <3%
+    (D("100"), D("90"), PriceEventType.TARGET_REACHED),         # знову перетнула ціль згори
+    (None, D("90"), None),                                      # ціна зникала (None) — це не перетин
+])
+def test_detect_event_target_already_notified(old, new, expected):
+    assert pc._detect_event(old_price=old, new_price=new, target_price=D("95"), old_available=True,
+                            new_available=True, target_notified=True) == expected
+
+
+async def test_target_reached_not_repeated_while_price_stays_below(db, monkeypatch):
+    """Регресія: двічі «🎯 ціль досягнута» з тією ж ціною (EcoFlow, 37 000 при цілі 40 000)."""
+    user = await seed_user(1)
+    tr = await seed_tracker(user, price="43000", target="40000")
+
+    async def check(price: str) -> list[str]:
+        patch_scrape(monkeypatch, product(price=price))
+        await pc.check_single_price(tr, make_bot())
+        return [n.event_type for n in sorted(await notifications(), key=lambda n: n.created_at)]
+
+    assert await check("37000") == [PriceEventType.TARGET_REACHED]
+    assert await check("37000") == [PriceEventType.TARGET_REACHED]                     # без повтору
+    assert await check("35000") == [PriceEventType.TARGET_REACHED, PriceEventType.DECREASE]
+    assert await check("45000") == [PriceEventType.TARGET_REACHED, PriceEventType.DECREASE]
+    assert await check("38000") == [PriceEventType.TARGET_REACHED, PriceEventType.DECREASE,
+                                    PriceEventType.TARGET_REACHED]                       # новий перетин
+
+
+async def test_target_above_price_at_creation_notifies_once(db, monkeypatch):
+    """Ціль вища за ціну вже при додаванні: перша перевірка сповіщає, наступні — ні."""
+    user = await seed_user(1)
+    tr = await seed_tracker(user, price="37000", target="40000")
+    patch_scrape(monkeypatch, product(price="37000"))
+    await pc.check_single_price(tr, make_bot())
+    await pc.check_single_price(tr, make_bot())
+    assert [n.event_type for n in await notifications()] == [PriceEventType.TARGET_REACHED]
+
+
 # ─── check_single_price ──────────────────────────────────────────
 
 async def test_check_single_price_success_updates_tracker_and_history(db, monkeypatch):

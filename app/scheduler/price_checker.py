@@ -345,6 +345,11 @@ async def check_single_price(tracker: PriceTracker, bot) -> None:
                 is_available=result.is_available,
             ))
 
+        # Чи вже сповіщали про досягнуту ціль — лише коли ціна зараз на/під ціллю (інакше не потрібно)
+        target_notified = False
+        if db_tracker.target_price and result.price and result.price <= db_tracker.target_price:
+            target_notified = await _target_already_notified(session, db_tracker.id)
+
         # Визначаємо тип події
         event = _detect_event(
             old_price=old_price,
@@ -352,6 +357,7 @@ async def check_single_price(tracker: PriceTracker, bot) -> None:
             target_price=db_tracker.target_price,
             old_available=old_available,
             new_available=result.is_available,
+            target_notified=target_notified,
         )
 
         if event:
@@ -412,14 +418,32 @@ def _suppression_reason(
     return None
 
 
+async def _target_already_notified(session, tracker_id: str) -> bool:
+    """Чи надсилали (успішно) по трекеру сповіщення TARGET_REACHED."""
+    row = await session.execute(
+        select(Notification.id).where(
+            Notification.tracker_id == tracker_id,
+            Notification.event_type == PriceEventType.TARGET_REACHED,
+            Notification.status == NotificationStatus.SENT,
+        ).limit(1)
+    )
+    return row.first() is not None
+
+
 def _detect_event(
     old_price: Decimal | None,
     new_price: Decimal | None,
     target_price: Decimal | None,
     old_available: bool,
     new_available: bool,
+    target_notified: bool = False,
 ) -> PriceEventType | None:
-    """Визначає чи потрібно сповіщення і якого типу."""
+    """
+    Визначає чи потрібно сповіщення і якого типу.
+
+    target_notified — по трекеру вже надсилали TARGET_REACHED. Тоді ціль знову сповіщаємо лише
+    коли ціна щойно перетнула її згори (була вище цілі), а не на кожній перевірці, поки ціна під ціллю.
+    """
 
     # Товар знову з'явився
     if not old_available and new_available:
@@ -427,7 +451,9 @@ def _detect_event(
 
     # Ціна досягла цільової
     if target_price and new_price and new_price <= target_price:
-        return PriceEventType.TARGET_REACHED
+        crossed = old_price is not None and old_price > target_price
+        if crossed or not target_notified:
+            return PriceEventType.TARGET_REACHED
 
     # Ціна впала більш ніж на 3%
     if old_price and new_price and new_price < old_price:

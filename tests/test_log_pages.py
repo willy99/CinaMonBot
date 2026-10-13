@@ -81,7 +81,8 @@ async def test_checks_page(db):
 
 async def _login(user):
     from botkit.admin import auth
-    await aq.create_admin("tester", auth.hash_password("test-pass-2026"), 1)
+    # Одразу owner: інакше startup-хук ensure_owner() може підвищити роль уже після входу → сесію відкличуть
+    await aq.create_admin("tester", auth.hash_password("test-pass-2026"), 1, role=auth.OWNER)
     await user.open("/login")
     user.find("Логін").type("tester")
     user.find("Пароль").type("test-pass-2026")

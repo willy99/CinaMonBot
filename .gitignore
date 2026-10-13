@@ -11,6 +11,7 @@ pyproject.toml
 __pycache__/
 .DS_Store
 /venv/
+venv/
 
 # NiceGUI session storage (admin dashboard)
 .nicegui/
