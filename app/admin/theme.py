@@ -179,9 +179,12 @@ NAV = [
     ("/", "dashboard", "nav_dashboard"),
     ("/users", "group", "nav_users"),
     ("/trackers", "track_changes", "nav_trackers"),
+    ("/checks", "sync", "nav_checks"),
+    ("/notifications", "notifications", "nav_notifications"),
     ("/platforms", "storefront", "nav_platforms"),
     ("/feedback", "forum", "nav_feedback"),
     ("/system", "monitor_heart", "nav_system"),
+    ("/settings", "tune", "nav_settings"),
     ("/admins", "admin_panel_settings", "nav_admins"),
 ]
 

@@ -38,6 +38,7 @@ import structlog
 from bs4 import BeautifulSoup, Tag, UnicodeDammit
 
 from app.config import settings
+from app.services import runtime_settings as rt
 from botkit import netguard
 from app.services.scrapers import registry
 from app.services.scrapers.extract import extract_product, parse_price_text
@@ -336,8 +337,8 @@ def _find_by_selectors(soup: BeautifulSoup, selectors: list[str]) -> Tag | None:
 # ─── Rate limiter ────────────────────────────────────────────────
 
 class DomainRateLimiter:
-    def __init__(self, delay: float = settings.SCRAPE_DELAY_SECONDS):
-        self._delay = delay
+    def __init__(self, delay: float | None = None):
+        self._delay = delay          # None → SCRAPE_DELAY_SECONDS з налаштувань (змінюється на льоту, /settings)
         self._last: dict[str, float] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
@@ -349,7 +350,8 @@ class DomainRateLimiter:
     async def acquire(self, domain: str) -> None:
         async with self._lock(domain):
             now = time.monotonic()
-            wait = self._delay - (now - self._last.get(domain, 0))
+            delay = self._delay if self._delay is not None else float(rt.cached("SCRAPE_DELAY_SECONDS"))
+            wait = delay - (now - self._last.get(domain, 0))
             if wait > 0:
                 await asyncio.sleep(wait)
             self._last[domain] = time.monotonic()
@@ -497,7 +499,7 @@ class AbstractScraper(ABC):
         blocked_status: int | None = None
         last_reason = "max_retries_exceeded"
 
-        for attempt in range(1, settings.SCRAPE_MAX_RETRIES + 1):
+        for attempt in range(1, rt.cached("SCRAPE_MAX_RETRIES") + 1):
             try:
                 await _rate_limiter.acquire(self.domain)
                 fetched = await self._fetch_html(canonical)
@@ -524,7 +526,7 @@ class AbstractScraper(ABC):
             except _BlockedStatus as e:
                 blocked_status = e.status
                 logger.warning("http_blocked", domain=self.domain, status=e.status, attempt=attempt)
-                if e.status == 429 and attempt < settings.SCRAPE_MAX_RETRIES:
+                if e.status == 429 and attempt < rt.cached("SCRAPE_MAX_RETRIES"):
                     await _sleep(30 * attempt)
                     continue
             except httpx.HTTPStatusError as e:
@@ -537,7 +539,7 @@ class AbstractScraper(ABC):
                 last_reason = "max_retries_exceeded"
                 logger.error("scrape_error", domain=self.domain, error=str(e), attempt=attempt)
 
-            if attempt < settings.SCRAPE_MAX_RETRIES:
+            if attempt < rt.cached("SCRAPE_MAX_RETRIES"):
                 await _sleep(2 ** attempt)
 
         if blocked_status is not None:
@@ -662,6 +664,11 @@ class AbstractScraper(ABC):
     def supports(cls, url: str) -> bool:
         host = _host_of(url)
         return bool(host) and (host == cls.domain or host.endswith("." + cls.domain))
+
+    @classmethod
+    def for_url(cls, url: str) -> "AbstractScraper":
+        """Екземпляр для конкретного URL (перевизначають парсери, у яких domain залежить від хоста)."""
+        return cls()
 
 
 # ─── Rozetka ─────────────────────────────────────────────────────
@@ -841,12 +848,70 @@ class GenericScraper(AbstractScraper):
         return None
 
 
+# ─── Notino ──────────────────────────────────────────────────────
+
+class NotinoScraper(AbstractScraper):
+    """
+    Notino (усі країни): ціна варіанта з `/p-<id>/` береться зі стану сторінки
+    (`__APOLLO_STATE__`), бо JSON-LD завжди описує варіант за замовчуванням.
+    Якщо стану немає — універсальний extract_product (JSON-LD).
+    """
+
+    domain = "notino.ua"
+
+    def __init__(self, url: str = "") -> None:
+        host = _host_of(url)
+        if host:
+            self.domain = host
+
+    @classmethod
+    def supports(cls, url: str) -> bool:
+        from app.services.scrapers.notino import is_notino_host
+        try:
+            scheme = urlparse(url).scheme
+        except ValueError:
+            return False
+        return scheme in ("http", "https") and is_notino_host(_host_of(url))
+
+    @classmethod
+    def for_url(cls, url: str) -> "NotinoScraper":
+        return cls(url)
+
+    def canonicalize_url(self, url: str) -> str:
+        # Варіант живе в шляху (/p-123/), у query лише трекінг — прибираємо
+        parsed = urlparse(url)
+        return urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path or "/", "", "", ""))
+
+    def _parse(self, html: str, url: str) -> ScrapeResult:
+        from app.services.scrapers.notino import extract_notino, variant_id_from_url
+        try:
+            data = extract_notino(html, url)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("notino_extract_failed", domain=self.domain, error=str(e))
+            data = None
+        if data is not None:
+            return data
+        if variant_id_from_url(url):
+            # Явно вибраний варіант, але стану немає — JSON-LD дав би ціну іншого об'єму
+            return ScrapeError(url=url, reason="parse_failed")
+        try:
+            data = extract_product(html, url)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("extract_failed", domain=self.domain, error=str(e))
+            data = None
+        return data if data is not None else ScrapeError(url=url, reason="parse_failed")
+
+    async def _try_heal(self, html: str, url: str) -> ScrapeResult | None:
+        return None
+
+
 # ─── Factory ─────────────────────────────────────────────────────
 
 _SCRAPERS: list[type[AbstractScraper]] = [
     RozetkaScraper,
     OLXScraper,
     PromScraper,
+    NotinoScraper,
 ]
 
 
@@ -857,7 +922,7 @@ class ScraperFactory:
         url = (url or "").strip()
         for cls in _SCRAPERS:
             if cls.supports(url):
-                return cls()
+                return cls.for_url(url)
         if GenericScraper.supports(url):
             return GenericScraper(url)
         return None

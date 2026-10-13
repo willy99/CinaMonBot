@@ -12,7 +12,7 @@ from decimal import Decimal
 
 from sqlalchemy import and_, case, desc, func, or_, select
 
-from app.config import settings
+from app.services import runtime_settings as rt
 from app.database.models import (
     Feedback, Notification, NotificationStatus,
     PriceHistory, PriceTracker, ScrapeLog, SubscriptionTier, TrackerStatus, User,
@@ -114,7 +114,7 @@ async def overview() -> Overview:
         notif_prev_24h=notif_prev,
         notif_failed_24h=notif_failed,
         premium_expiring_7d=expiring,
-        revenue_month_uah=users_premium * settings.PREMIUM_PRICE_UAH,
+        revenue_month_uah=users_premium * rt.cached("PREMIUM_PRICE_UAH"),
     )
 
 

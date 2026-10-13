@@ -109,8 +109,8 @@ class User(Base, TimestampMixin):
 
     @property
     def active_tracker_limit(self) -> int:
-        from app.config import settings
-        return 999 if self.is_premium else settings.FREE_TIER_MAX_ITEMS
+        from app.services import runtime_settings as rt
+        return 999 if self.is_premium else rt.cached("FREE_TIER_MAX_ITEMS")
 
 
 class PriceTracker(Base, TimestampMixin):
@@ -348,3 +348,17 @@ class Heartbeat(Base):
     name: Mapped[str] = mapped_column(String(32), primary_key=True)
     at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     info: Mapped[str | None] = mapped_column(Text)
+
+
+class AppSetting(Base):
+    """
+    Перекриття значень з .env, які можна міняти на льоту з дашборду (/settings): інтервали перевірки,
+    ліміт Free, ціна Premium, темп скрапера. Ключ = ім'я поля Settings. Читається через
+    app.services.runtime_settings (кеш ~10 с), тож бот підхоплює зміну без рестарту.
+    """
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    updated_by: Mapped[str | None] = mapped_column(String(64))

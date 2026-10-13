@@ -14,6 +14,7 @@
 | `botkit.bot.middlewares` | заблоковані адміном; ліміт `USER_REQUESTS_PER_MINUTE` на користувача |
 | `botkit.db.migrate` | Alembic: `migrate()`, `ensure_schema()`, legacy-шлях; `migration_helpers`, `alembic_env` |
 | `botkit.ops` | `backup`, `healthcheck` (дебаунс, лише адміну), `heartbeat` |
+| `botkit.runtime_settings` | налаштування «на льоту»: перекриття `.env` у таблиці `app_settings`, набір параметрів реєструє проєкт; сторінка `/settings` — `pages.register(with_settings=True)` |
 | `botkit.logs` | логування з маскуванням токена бота |
 | `botkit.ratelimit`, `botkit.breaker`, `botkit.netguard` | ковзне вікно, запобіжник, захист від SSRF |
 
@@ -34,7 +35,8 @@ botkit.setup(botkit.Context(app_name="Snipket", settings=settings, get_session=g
   `failed_logins`, `locked_until`, `created_at`;
 - `AdminAction`: `admin_id`, `admin_username`, `action`, `target`, `details`, `created_at`;
 - `User`: `telegram_id`, `is_blocked`;
-- `Heartbeat`: `name`, `at`, `info`.
+- `Heartbeat`: `name`, `at`, `info`;
+- `AppSetting` (для `/settings`): `key`, `value`, `updated_by`, `updated_at`.
 
 ## Оновлення в проєктах
 

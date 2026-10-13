@@ -36,6 +36,7 @@ from app.bot.keyboards import (
     digest_toggle_button, notification_keyboard, tracker_settings_keyboard,
 )
 from app.config import settings
+from app.services import runtime_settings as rt
 from app.database.session import get_session
 from app.database.models import Feedback, PriceTracker, TrackerStatus, User
 from app.i18n import LANGUAGES, country_label, fmt_date, fmt_money, fmt_percent, t
@@ -179,8 +180,8 @@ async def cmd_start(message: Message) -> None:
     else:
         plan_block = t(
             lang, "plans",
-            n=settings.FREE_TIER_MAX_ITEMS,
-            price=settings.PREMIUM_PRICE_UAH,
+            n=rt.cached("FREE_TIER_MAX_ITEMS"),
+            price=rt.cached("PREMIUM_PRICE_UAH"),
         )
 
     await message.answer(
@@ -331,10 +332,10 @@ async def process_url(message: Message, state: FSMContext) -> None:
     # Перевірка ліміту
     count = await count_trackers(user.id)
     '''
-    if not user.is_premium and count >= settings.FREE_TIER_MAX_ITEMS:
+    if not user.is_premium and count >= rt.cached("FREE_TIER_MAX_ITEMS"):
         await message.answer(
             f"⚠️ <b>Ліміт досягнуто!</b>\n\n"
-            f"У тебе {count}/{settings.FREE_TIER_MAX_ITEMS} товарів на безкоштовному плані.\n"
+            f"У тебе {count}/{rt.cached("FREE_TIER_MAX_ITEMS")} товарів на безкоштовному плані.\n"
             f"Перейди на Premium: /premium",
             parse_mode="HTML",
         )
@@ -504,10 +505,10 @@ async def _save_tracker(from_user, state, msg, target_price, *, target_percent=N
     _, paused_now = await sync_free_limit(user.id)
     if not user.is_premium:
         if any(tr.id == new_id for tr in paused_now):
-            slot_text = t(lang, "added_paused", n=settings.FREE_TIER_MAX_ITEMS)
+            slot_text = t(lang, "added_paused", n=rt.cached("FREE_TIER_MAX_ITEMS"))
         else:
             used = await count_active(user.id)
-            slot_text = t(lang, "added_slots", used=used, n=settings.FREE_TIER_MAX_ITEMS)
+            slot_text = t(lang, "added_slots", used=used, n=rt.cached("FREE_TIER_MAX_ITEMS"))
     else:
         slot_text = ""
 
@@ -992,10 +993,10 @@ async def cmd_premium(event: Message | CallbackQuery) -> None:
         )
     else:
         await msg.answer(
-            t(lang, "premium_offer", price=settings.PREMIUM_PRICE_UAH),
+            t(lang, "premium_offer", price=rt.cached("PREMIUM_PRICE_UAH")),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(
-                    text=t(lang, "btn_pay", price=settings.PREMIUM_PRICE_UAH),
+                    text=t(lang, "btn_pay", price=rt.cached("PREMIUM_PRICE_UAH")),
                     callback_data="pay_premium",
                 )],
             ]),
@@ -1426,7 +1427,7 @@ async def cmd_pay_premium(callback: CallbackQuery) -> None:
     await callback.message.answer(
         t(
             lang, "pay_instructions",
-            price=settings.PREMIUM_PRICE_UAH,
+            price=rt.cached("PREMIUM_PRICE_UAH"),
             card=settings.CARD_NUMBER,
             ref=payment_ref,
         ),
@@ -1556,7 +1557,7 @@ async def cmd_pay_premium(callback: CallbackQuery) -> None:
 
     await callback.message.answer(
         f"💳 <b>Оплата Premium</b>\n\n"
-        f"Сума: <b>{settings.PREMIUM_PRICE_UAH} грн</b>\n"
+        f"Сума: <b>{rt.cached("PREMIUM_PRICE_UAH")} грн</b>\n"
         f"Термін: 30 днів\n\n"
         f"Після оплати натисни кнопку нижче щоб активувати.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -1653,9 +1654,9 @@ async def cmd_info(message: Message) -> None:
     await message.answer(
         t(
             lang, "info",
-            n=settings.FREE_TIER_MAX_ITEMS,
-            free_hours=settings.FREE_TIER_CHECK_INTERVAL_MINUTES // 60,
-            price=settings.PREMIUM_PRICE_UAH,
+            n=rt.cached("FREE_TIER_MAX_ITEMS"),
+            free_hours=rt.cached("FREE_TIER_CHECK_INTERVAL_MINUTES") // 60,
+            price=rt.cached("PREMIUM_PRICE_UAH"),
             contacts=t(lang, "contacts"),
         ),
         parse_mode="HTML",

@@ -53,6 +53,10 @@ PLATFORMS: list[Platform] = [
     Platform("rozetka.com.ua", "Rozetka", "UA", "verified", "selectors", "власний парсер + JSON-LD fallback"),
     Platform("olx.ua", "OLX", "UA", "verified", "json-ld", "власний парсер"),
     Platform("prom.ua", "Prom.ua", "UA", "verified", "selectors", "власний парсер"),
+    Platform("notino.ua", "Notino", "UA", "verified", "notino-state",
+             "власний парсер, перевірено 2026-10-13: ціна варіанта (об'єм/відтінок із /p-<id>/) зі стану сторінки "
+             "__APOLLO_STATE__ — JSON-LD завжди описує варіант за замовчуванням. httpx, без браузера.",
+             "https://www.notino.ua/biorepair/total-protective-repair-zmicnjujucha-zubna-pasta/"),
     # ── Україна: універсальний парсер ──
     Platform("comfy.ua", "Comfy", "UA", "verified", "json-ld",
              "через Playwright, перевірено 2026-10-11: Cloudflare пропускає headless Chromium, json-ld за ~3 с "

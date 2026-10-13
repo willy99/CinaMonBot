@@ -74,16 +74,17 @@ async def test_stale_scheduler_alerts_once_then_recovers(db, health_env):
         s.add(Heartbeat(name="scheduler", at=datetime.utcnow() - timedelta(minutes=30)))
     async with rec.client() as c:
         assert await hc.check(c, now=1000.0)
-        assert rec.telegram() == []                          # перша погана перевірка — ще не тривога
-        assert await hc.check(c, now=1300.0)                 # друга поспіль — тривога
-        assert await hc.check(c, now=1600.0)                 # ще погано, але алерт не повторюємо
+        assert await hc.check(c, now=1300.0)
+        assert rec.telegram() == []                          # 5 хв збою — ще не тривога (поріг 10 хв)
+        assert await hc.check(c, now=1600.0)                 # 10 хв безперервно — тривога
+        assert await hc.check(c, now=1900.0)                 # ще погано, але алерт не повторюємо
     tg = rec.telegram()
     assert len(tg) == 1 and "планувальник" in tg[0] and "BOT_TOKEN" not in tg[0]
-    assert sum(1 for c in rec.calls if c[1].endswith("/fail")) == 3
+    assert sum(1 for c in rec.calls if c[1].endswith("/fail")) == 4
 
     await heartbeat.beat(heartbeat.SCHEDULER)
     async with rec.client() as c:
-        assert await hc.check(c, now=1700.0) == []
+        assert await hc.check(c, now=2000.0) == []
     assert "знову працює" in rec.telegram()[-1]
     assert ("GET", "https://hc-ping.example/uuid", "") in rec.calls        # пінг «живий»
 

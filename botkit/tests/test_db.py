@@ -83,11 +83,13 @@ async def test_healthcheck_debounced_admin_only(kit, monkeypatch):
         await hc.check(c, now=1300.0)
         assert rec.telegram() == []                                  # один збій — тиша
         await hc.check(c, now=1600.0)
+        assert rec.telegram() == []                                  # 5 хв збою — ще тиша (поріг 10 хв)
+        await hc.check(c, now=1900.0)
     assert len(rec.telegram()) == 1 and rec.telegram()[0].startswith("🚨 TestBot")
     assert all('"chat_id": 1' in c[2] for c in rec.calls if "api.telegram.org" in c[1])   # лише адміну
     await heartbeat.beat(heartbeat.SCHEDULER)
     async with rec.client() as c:
-        await hc.check(c, now=1900.0)
+        await hc.check(c, now=2200.0)
     assert "знову працює" in rec.telegram()[-1]
 
 
@@ -114,3 +116,22 @@ async def test_middlewares(kit):
     results = [await mw(handler, MagicMock(), {"event_from_user": who(13)}) for _ in range(22)]
     assert results.count("ok") == 20 and results[-1] is None
     assert await mw(handler, MagicMock(), {"event_from_user": who(1)}) == "ok"      # адмін без ліміту
+
+
+async def test_healthcheck_silent_after_laptop_sleep(kit, monkeypatch):
+    """13.10: Mac спав 25 хв — бот не тікав, а pm2 після пробудження зробив дві перевірки за 18 с → хибна тривога."""
+    monkeypatch.setattr(hc, "STATE_FILE", kit.root / "state.json")
+    rec = _Rec()
+    await heartbeat.beat(heartbeat.SCHEDULER)
+    async with rec.client() as c:
+        await hc.check(c, now=1000.0)                                # усе добре, далі сон
+    async with kit.get_session() as s:
+        hb = await s.get(kit.models.Heartbeat, "scheduler")
+        hb.at = datetime.utcnow() - timedelta(minutes=26)
+    async with rec.client() as c:
+        await hc.check(c, now=1000.0 + 26 * 60)                      # прокинулись: heartbeat старий
+        await hc.check(c, now=1000.0 + 26 * 60 + 18)                 # pm2 надолужує
+    await heartbeat.beat(heartbeat.SCHEDULER)                        # бот тікнув після пробудження
+    async with rec.client() as c:
+        await hc.check(c, now=1000.0 + 31 * 60)
+    assert rec.telegram() == []                                      # ні тривоги, ні «знову працює»

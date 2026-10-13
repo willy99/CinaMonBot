@@ -22,6 +22,7 @@ import httpx
 import structlog
 
 from app.config import settings
+from app.services import runtime_settings as rt
 
 logger = structlog.get_logger(__name__)
 
@@ -54,7 +55,7 @@ def create_payment_url(user_id: str, telegram_id: int) -> str:
         "version": 3,
         "public_key": settings.LIQPAY_PUBLIC_KEY,
         "action": "pay",
-        "amount": settings.PREMIUM_PRICE_UAH,
+        "amount": rt.cached("PREMIUM_PRICE_UAH"),
         "currency": "UAH",
         "description": f"ЦінаБот Premium — 1 місяць",
         "order_id": order_id,

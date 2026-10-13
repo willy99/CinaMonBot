@@ -22,6 +22,7 @@ from sqlalchemy.orm import joinedload
 from app.scheduler import breaker
 from botkit.ops import heartbeat
 from app.config import settings
+from app.services import runtime_settings as rt
 from app.database.session import get_session
 from app.database.models import (
     PriceTracker, PriceHistory, Notification,
@@ -47,6 +48,15 @@ def setup_scheduler(bot) -> None:
     Реєструємо задачі і стартуємо scheduler.
     Викликається один раз при запуску бота.
     """
+    # Налаштування «на льоту» (/settings): перечитуємо перекриття з бази — rt.cached() у боті бачить зміни за ~10 с
+    scheduler.add_job(
+        rt.refresh,
+        trigger="interval",
+        seconds=10,
+        id="runtime_settings_refresh",
+        replace_existing=True,
+        next_run_time=datetime.now(timezone.utc),
+    )
     # Перевірка закінчення Premium — раз на годину
     scheduler.add_job(
         handle_expired_premiums,
@@ -100,7 +110,6 @@ async def handle_expired_premiums(bot) -> None:
     from sqlalchemy import select
     from datetime import datetime, timezone
     from app.database.models import User, SubscriptionTier
-    from app.config import settings
 
     async with get_session() as session:
         now = datetime.now(timezone.utc)
@@ -132,7 +141,6 @@ async def _pause_excess_trackers(user, bot) -> None:
     Після закінчення Premium: активними лишаються FREE_TIER_MAX_ITEMS найстаріших,
     решта → PAUSED_LIMIT (через sync_free_limit). Повідомляє юзера, якщо щось поставлено на паузу.
     """
-    from app.config import settings
     from app.services.limits import sync_free_limit
 
     _, paused = await sync_free_limit(user.id)
@@ -148,7 +156,7 @@ async def _pause_excess_trackers(user, bot) -> None:
         paused_list = "\n".join(f"  ⏸ {title}" for title in paused_titles)
         msg_text = t(
             lang, "premium_expired",
-            n=settings.FREE_TIER_MAX_ITEMS,
+            n=rt.cached("FREE_TIER_MAX_ITEMS"),
             paused=paused_list,
         )
         try:
@@ -192,9 +200,9 @@ async def _dispatch_price_checks(bot) -> None:
     for tracker in trackers:
         user = tracker.user
         interval = (
-            settings.PREMIUM_CHECK_INTERVAL_MINUTES
+            rt.cached("PREMIUM_CHECK_INTERVAL_MINUTES")
             if user.is_premium
-            else settings.FREE_TIER_CHECK_INTERVAL_MINUTES
+            else rt.cached("FREE_TIER_CHECK_INTERVAL_MINUTES")
         )
         if tracker.source and breaker.is_open(tracker.source):
             continue                  # магазин тимчасово недоступний — last_checked_at не чіпаємо
@@ -394,7 +402,7 @@ def _suppression_reason(
             if last.tzinfo is None:
                 last = last.replace(tzinfo=timezone.utc)
             cheaper = bool(old_price and new_price and new_price < old_price)
-            if now - last < timedelta(days=settings.RESTOCK_COOLDOWN_DAYS) and not cheaper:
+            if now - last < timedelta(days=rt.cached("RESTOCK_COOLDOWN_DAYS")) and not cheaper:
                 return "restock_cooldown"
         return None
 

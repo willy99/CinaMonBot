@@ -12,10 +12,12 @@ from app.admin.theme import (
     set_nav_badge,
 )
 from app.config import settings
+from app.services import runtime_settings as rt
 
 
 @ui.page("/")
 async def dashboard_page() -> None:
+    await rt.refresh()               # ліміт Free, ціна Premium, інтервали — з урахуванням /settings
     with layout(at("nav_dashboard"), "/"):
         ov, series, breaks, expiring, problems, top, platforms, fb = await asyncio.gather(
             q.overview(), q.daily_series(30), q.breakdowns(), q.premium_expiring(14),
@@ -152,11 +154,11 @@ async def dashboard_page() -> None:
 
             with card(at("card_bot_settings"), at("card_bot_settings_sub")):
                 rows = [
-                    (at("setting_free_limit"), at("setting_free_limit_value", n=settings.FREE_TIER_MAX_ITEMS)),
+                    (at("setting_free_limit"), at("setting_free_limit_value", n=rt.cached("FREE_TIER_MAX_ITEMS"))),
                     (at("setting_premium_price"),
-                     at("setting_premium_price_value", price=amoney(settings.PREMIUM_PRICE_UAH, "UAH"))),
-                    (at("setting_free_interval"), at("setting_hours", n=settings.FREE_TIER_CHECK_INTERVAL_MINUTES // 60)),
-                    (at("setting_premium_interval"), at("setting_minutes", n=settings.PREMIUM_CHECK_INTERVAL_MINUTES)),
+                     at("setting_premium_price_value", price=amoney(rt.cached("PREMIUM_PRICE_UAH"), "UAH"))),
+                    (at("setting_free_interval"), at("setting_hours", n=rt.cached("FREE_TIER_CHECK_INTERVAL_MINUTES") // 60)),
+                    (at("setting_premium_interval"), at("setting_minutes", n=rt.cached("PREMIUM_CHECK_INTERVAL_MINUTES"))),
                     (at("setting_database"), "SQLite" if settings.is_sqlite else "PostgreSQL"),
                     (at("setting_2fa"), at("enabled") if settings.ADMIN_2FA_ENABLED else at("disabled")),
                 ]

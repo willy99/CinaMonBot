@@ -4,7 +4,8 @@
 Кожні 5 хв (pm2 «<проєкт>-health»): heartbeat планувальника з бази (+ /v1/health API, якщо API_HEALTH_URL).
   - усе добре → пінг HEALTHCHECK_PING_URL (healthchecks.io / Uptime Kuma push), якщо задано;
   - погано → <url>/fail; повідомлення ЛИШЕ адміну (ADMIN_TELEGRAM_ID) напряму через Bot API, і тільки коли
-    проблема тримається CONFIRM_CHECKS перевірок поспіль, не частіше ніж раз на ALERT_REPEAT_SECONDS;
+    проблема тримається безперервно ≥ CONFIRM_SECONDS (і ≥ CONFIRM_CHECKS перевірок), не частіше ніж раз на
+    ALERT_REPEAT_SECONDS; після сну машини (пауза між перевірками > SLEEP_GAP_SECONDS) відлік починається заново;
     «✅ знову працює» — лише якщо перед цим була тривога. Свіжий старт бота (ще жодного тіку) — не проблема.
 """
 from __future__ import annotations
@@ -23,7 +24,9 @@ from botkit.ops import heartbeat
 logger = structlog.get_logger(__name__)
 STATE_FILE: Path | None = None        # None → <root>/logs/.health_state.json
 ALERT_REPEAT_SECONDS = 3600
-CONFIRM_CHECKS = 2            # 2 × 5 хв: тривога лише для стійкої проблеми
+CONFIRM_CHECKS = 2            # і щонайменше дві перевірки з проблемою,
+CONFIRM_SECONDS = 600         # і проблема тримається безперервно ≥ 10 хв — лише тоді тривога
+SLEEP_GAP_SECONDS = 900       # перевірки не було > 15 хв → машина спала / pm2 стояв: збій рахуємо заново
 
 
 def _state_file() -> Path:
@@ -79,13 +82,23 @@ async def check(client: httpx.AsyncClient | None = None, now: float | None = Non
         problems = await _problems(client)
         state = _load_state()
         ping = ctx().settings.HEALTHCHECK_PING_URL
+        last_run = state.get("last_run_at")
+        if last_run is not None and now - last_run > SLEEP_GAP_SECONDS:
+            # Ноутбук спав: бот теж стояв, а pm2 після пробудження надолужує пропущені запуски кількома
+            # перевірками за секунди. Застарілий heartbeat тут — наслідок сну, а не збою: рахуємо з нуля.
+            state.pop("fail_count", None)
+            state.pop("first_failure_at", None)
+        state["last_run_at"] = now
         if problems:
             if ping:
                 await client.post(ping.rstrip("/") + "/fail", content="\n".join(problems), timeout=10)
             state["fail_count"] = state.get("fail_count", 0) + 1
+            state.setdefault("first_failure_at", now)
             last = state.get("alerted_at")
-            # Тривога — лише якщо проблема тримається CONFIRM_CHECKS перевірок поспіль (рестарт, разовий збій — ні)
-            if state["fail_count"] >= CONFIRM_CHECKS and (last is None or now - last >= ALERT_REPEAT_SECONDS):
+            # Тривога — лише для стійкої проблеми: ≥ CONFIRM_CHECKS перевірок і ≥ CONFIRM_SECONDS безперервно
+            # (рестарт, разовий збій, пробудження після сну — ні)
+            lasting = now - state["first_failure_at"] >= CONFIRM_SECONDS
+            if state["fail_count"] >= CONFIRM_CHECKS and lasting and (last is None or now - last >= ALERT_REPEAT_SECONDS):
                 await _tell_admin(client, f"🚨 {ctx().app_name}: " + "; ".join(problems))
                 state["alerted_at"] = now
         else:
@@ -93,7 +106,7 @@ async def check(client: httpx.AsyncClient | None = None, now: float | None = Non
                 await client.get(ping, timeout=10)
             if state.get("alerted_at") is not None:          # «відновився» — лише після справжньої тривоги
                 await _tell_admin(client, f"✅ {ctx().app_name} знову працює.")
-            state = {}
+            state = {"last_run_at": now}
         _save_state(state)
         return problems
     finally:
