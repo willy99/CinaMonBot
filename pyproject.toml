@@ -1,0 +1,9 @@
+[project]
+name = "botkit"
+version = "0.1.0"
+description = "Спільний код Snipket і ЦінаБот: адмінка, ops, міграції, ліміти, безпека"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
