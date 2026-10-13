@@ -1,7 +1,8 @@
 # botkit
 
 Спільний код Snipket (`~/work/snipket`) і ЦінаБот / PriceGuard (`~/work/priceguard`). Джерело правди —
-цей репозиторій; у проєкти він вбудований через **git subtree** у папку `botkit/` (імпорт: `import botkit`).
+цей репозиторій (GitHub `willy99/botkit`, приватний; локально `~/work/botkit`); у проєкти він вбудований
+через **git subtree** у папку `botkit/` (імпорт: `import botkit`).
 
 | Модуль | Що робить |
 |---|---|
@@ -38,11 +39,14 @@ botkit.setup(botkit.Context(app_name="Snipket", settings=settings, get_session=g
 ## Оновлення в проєктах
 
 ```bash
-# у ~/work/botkit: зміни + тести + коміт
-cd ~/work/botkit && PYTHONPATH=.. ../snipket/venv/bin/python -m pytest -q
-# у проєкті: підтягнути (робоче дерево проєкту має бути закомічене)
+# у ~/work/botkit: зміни + тести + коміт + push
+cd ~/work/botkit && PYTHONPATH=.. ../snipket/venv/bin/python -m pytest -q && git push
+# у кожному проєкті: підтягнути з GitHub (робоче дерево проєкту має бути закомічене)
 cd ~/work/snipket && ./run.sh botkit-pull
 ```
+
+Джерело для `botkit-pull` — GitHub `willy99/botkit` (за замовчуванням у `run.sh`). Щоб підтягнути ще не
+запушену локальну версію: `BOTKIT_REPO=~/work/botkit ./run.sh botkit-pull`.
 
 Правка прямо в `botkit/` усередині проєкту теж можлива. Тоді треба віддати її назад:
 `git subtree push --prefix=botkit ~/work/botkit <гілка>`.

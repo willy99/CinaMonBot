@@ -23,6 +23,7 @@ class Models:
     AdminAction: Any
     User: Any
     Heartbeat: Any | None = None
+    AppSetting: Any | None = None              # для botkit.runtime_settings (налаштування «на льоту»)
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,8 @@ class AdminUI:
     brand_icon: str = "shield"                  # іконка на сторінці логіну
     brand_title: str | None = None              # None → at("page_title_suffix")
     fmt_dt: Callable[[Any, str], str] = field(default=lambda d, fmt: d.strftime(fmt) if d else "—")
+    badge: Callable[..., Any] | None = None          # badge(text, kind) — для сторінки /settings
+    readonly_rows: Callable[[], list[tuple[str, str]]] | None = None   # «лише з .env» на /settings
 
 
 @dataclass(frozen=True)

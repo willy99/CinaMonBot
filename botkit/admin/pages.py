@@ -15,6 +15,7 @@ import json
 from nicegui import app, ui
 
 from botkit.admin import auth
+from botkit import runtime_settings as rt
 from botkit.admin import queries as q
 from botkit.context import ctx
 
@@ -60,10 +61,15 @@ def _login_css() -> str:
 """
 
 
-def register() -> None:
-    """Додає маршрути /login і /admins. Викликати з app/admin/pages/__init__.py (його виконує admin.py)."""
+def register(with_settings: bool = False) -> None:
+    """
+    Додає маршрути /login і /admins (+ /settings, якщо with_settings=True і проєкт зареєстрував
+    botkit.runtime_settings.register(...)). Викликати з app/admin/pages/__init__.py (його виконує admin.py).
+    """
     ui.page("/login")(login_page)
     ui.page("/admins")(admins_page)
+    if with_settings:
+        ui.page("/settings")(settings_page)
 
 
 # ─── /login ──────────────────────────────────────────────────────
@@ -467,3 +473,81 @@ async def _render(me: dict, refresh) -> None:
             ]
             ui.table(columns=columns, rows=log, pagination=15) \
                 .props(f'flat dense rows-per-page-label="{at("rows_per_page")}"').classes("w-full")
+
+
+# ─── /settings: налаштування «на льоту» (botkit.runtime_settings) ──
+
+async def settings_page() -> None:
+    with layout(at("nav_settings"), "/settings"):
+        ui.label(at("settings_intro")).classes("pg-muted").style("font-size:13px; max-width: 900px")
+        content = ui.column().classes("w-full gap-5")
+
+        async def render() -> None:
+            content.clear()
+            items = await rt.snapshot()
+            with content:
+                for group in rt.GROUPS:
+                    rows = [i for i in items if i["group"] == group]
+                    if not rows:
+                        continue
+                    with card(at(f"settings_group_{group}")):
+                        with ui.element("div").classes("w-full grid gap-4").style("grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));"):
+                            for item in rows:
+                                _setting_field(item, render)
+
+                rows = _ui().readonly_rows() if _ui().readonly_rows else []
+                if rows:
+                    with card(at("settings_readonly_title")):
+                        with ui.element("div").classes("w-full grid gap-2").style(
+                                "grid-template-columns: max-content 1fr; column-gap: 24px;"):
+                            for label, value in rows:
+                                ui.label(label).classes("pg-muted").style("font-size:13px")
+                                ui.label(value).classes("pg-mono")
+
+        await render()
+
+
+def _setting_field(item: dict, refresh) -> None:
+    key = item["key"]
+    unit = at(item["unit"]) if item["unit"] else ""
+    with ui.column().classes("gap-1").style("min-width:0"):
+        with ui.row().classes("items-center gap-2 no-wrap"):
+            ui.label(at(f"setting_{key}")).style("font-weight:600; font-size:14px")
+            if item["overridden"]:
+                if _ui().badge:
+                    _ui().badge(at("settings_default", value=_fmt(item["default"], unit)), "warning")
+        ui.label(at(f"setting_{key}_help")).classes("pg-muted").style("font-size:12px; line-height:1.35")
+        with ui.row().classes("items-center gap-2 no-wrap w-full"):
+            inp = ui.number(value=item["value"], min=item["min"], max=item["max"],
+                            step=1 if item["kind"] == "int" else 0.5, suffix=unit) \
+                .props("outlined dense").classes("flex-grow").style("max-width: 200px").mark(f"setting-{key}")
+            err = ui.label().classes("pg-danger").style("font-size:12px")
+
+            async def save(_=None, key=key, inp=inp, err=err) -> None:
+                try:
+                    value = await rt.set_value(key, inp.value, by=(auth.current_admin() or {}).get("username"))
+                except (ValueError, TypeError):
+                    err.text = at("settings_invalid", min=item["min"], max=item["max"])
+                    return
+                await auth.audit("setting_change", key, str(value))
+                ui.notify(at("settings_saved", name=key, value=value), type="positive")
+                await refresh()
+
+            async def reset(_=None, key=key) -> None:
+                await rt.reset_value(key)
+                await auth.audit("setting_reset", key)
+                ui.notify(at("settings_reset_done", name=key), type="info")
+                await refresh()
+
+            ui.button(at("btn_save"), on_click=save).props("unelevated no-caps dense").mark(f"save-{key}")
+            if item["overridden"]:
+                ui.button(at("btn_reset"), on_click=reset).props("flat no-caps dense").mark(f"reset-{key}")
+        meta = at("settings_range", min=_fmt(item["min"], ""), max=_fmt(item["max"], ""))
+        if item["overridden"] and item["updated_at"]:
+            meta += " · " + at("settings_changed_by", when=_ui().fmt_dt(item["updated_at"], "%d.%m.%Y %H:%M"), by=item["updated_by"] or "—")
+        ui.label(meta).classes("pg-sub")
+
+
+def _fmt(v, unit: str) -> str:
+    s = f"{v:g}" if isinstance(v, float) else str(v)
+    return f"{s} {unit}".strip()
