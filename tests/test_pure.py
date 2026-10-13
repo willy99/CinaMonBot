@@ -44,6 +44,17 @@ def test_breaker_backoff_success_snapshot():
     assert b.success("x") and not b.success("x") and not b.is_open("x")
 
 
+def test_breaker_restore_continues_series():
+    """Після рестарту процесу серія триває: trip() не «перший» (без повторного алерту), пауза росте далі."""
+    b = Breaker(base_seconds=60, max_seconds=1800)
+    b.restore("uz", failures=5, paused_s=200, reason="ProviderUnavailable", now=0.0)
+    assert b.is_open("uz", now=100.0) and not b.is_open("uz", now=201.0)
+    assert b.snapshot(now=0.0)["uz"] == {"paused_s": 200, "failures": 5, "reason": "ProviderUnavailable"}
+    assert b.trip("uz", "ProviderUnavailable", now=300.0) == (False, 1800)
+    b.restore("x", failures=0, paused_s=100)                         # порожній запис ігноруємо
+    assert "x" not in b.snapshot()
+
+
 @pytest.mark.parametrize("url", ["http://127.0.0.1:8088/", "http://localhost/", "http://10.0.0.5/", "http://[::1]/",
                                  "http://169.254.169.254/", "http://[::ffff:127.0.0.1]/", "file:///etc/passwd",
                                  "http://printer.local/", "http://100.64.0.1/"])

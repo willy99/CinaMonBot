@@ -42,6 +42,14 @@ class Breaker:
         st.open_until, st.reason = now + pause, reason
         return st.failures == 1, pause
 
+    def restore(self, key: str, failures: int, paused_s: float, reason: str = "", now: float | None = None) -> None:
+        """Повернути стан після рестарту процесу (напр. зі snapshot() у heartbeat): серія збоїв триває,
+        тож наступний trip() — не «перший» (без повторного алерту), а пауза росте далі, а не з base."""
+        if failures <= 0:
+            return
+        now = time.monotonic() if now is None else now
+        self._state[key] = _State(failures=int(failures), open_until=now + max(0.0, paused_s), reason=reason)
+
     def success(self, key: str) -> bool:
         """Джерело знову відповідає. True — якщо до цього було на паузі."""
         st = self._state.pop(key, None)
