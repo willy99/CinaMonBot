@@ -40,7 +40,7 @@ def _root() -> Path:
 
 
 def _url() -> str:
-    return ctx()._url()
+    return ctx().settings.DATABASE_URL
 
 
 class SchemaOutdated(RuntimeError):
