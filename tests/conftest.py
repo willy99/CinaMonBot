@@ -69,12 +69,21 @@ class Heartbeat(Base):
     info: Mapped[str | None] = mapped_column(Text)
 
 
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(255))
+    updated_by: Mapped[str | None] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 def make_settings(db_url: str, tmp: Path) -> SimpleNamespace:
     return SimpleNamespace(
         BOT_TOKEN=SecretStr("123456:TEST"), ADMIN_TELEGRAM_ID=1, DATABASE_URL=db_url, is_sqlite=True,
         ADMIN_SESSION_HOURS=12, ADMIN_2FA_CODE_TTL_SECONDS=300, ADMIN_LOGIN_MAX_ATTEMPTS=5,
         ADMIN_LOGIN_LOCK_MINUTES=15, ADMIN_2FA_ENABLED=False, BACKUP_DIR=str(tmp / "backups"), BACKUP_KEEP_DAYS=14,
         BACKUP_REMOTE="", HEALTHCHECK_PING_URL="", API_HEALTH_URL="", USER_REQUESTS_PER_MINUTE=20,
+        CHECK_MINUTES=60, DELAY_SECONDS=2.0,
     )
 
 
@@ -101,13 +110,14 @@ async def kit():
     previous = bk_context._ctx
     ctx = botkit.Context(
         app_name="TestBot", settings=make_settings(url, tmp), get_session=get_session,
-        models=botkit.Models(Admin, AdminAction, User, Heartbeat), root=tmp,
+        models=botkit.Models(Admin, AdminAction, User, Heartbeat, AppSetting), root=tmp,
         t=lambda lang, key, **kw: f"{key}:{kw}", resolve_lang=lambda code: "uk",
         heartbeat_tick_seconds=60, backup_prefix="testbot-",
     )
     botkit.setup(ctx)
-    from botkit import ratelimit
+    from botkit import ratelimit, runtime_settings
     ratelimit.reset()
+    runtime_settings.reset_cache()
     try:
         yield ctx
     finally:
