@@ -23,8 +23,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy import select
 
-from app.admin import auth, cli
+from app.admin import cli
+from botkit.admin import auth
 from app.admin import queries as q
+from botkit.admin import queries as aq
 from app.bot.handlers import main as h
 from app.config import settings
 from app.database.models import (
@@ -112,7 +114,7 @@ async def _feedback_rows() -> list[Feedback]:
 
 
 async def _login(user) -> None:
-    await q.create_admin("tester", auth.hash_password("correct-horse-9"), telegram_id=None)
+    await aq.create_admin("tester", auth.hash_password("correct-horse-9"), telegram_id=None)
     await user.open("/login")
     user.find("Логін").type("tester")
     user.find("Пароль").type("correct-horse-9")
@@ -229,7 +231,7 @@ ALLOWED_SEND_SITES: dict[tuple[str, str], str] = {
     # вимикається кнопкою під дайджестом або в /settings), не заблокований, і отримує рівно одне
     # повідомлення на свій telegram_id лише зі своїми трекерами. Тихий тиждень → нічого не шлеться.
     ("app/scheduler/digest.py", "send_weekly_digests"): "opt-in юзери (digest_enabled) — кожен лише свої дані на свій telegram_id",
-    ("app/admin/auth.py", "start_2fa"): "адмін дашборду (admin.telegram_id)",
+    ("botkit/admin/auth.py", "start_2fa"): "адмін дашборду (admin.telegram_id)",
     ("app/admin/pages/feedback.py", "send_reply"): "один юзер — автор фідбеку (d['telegram_id'])",
 }
 # Відправка всередині циклу/comprehension дозволена лише тут
@@ -269,7 +271,9 @@ def _send_call_sites(path: Path) -> list[tuple[str, bool, ast.Call]]:
 
 def _all_send_sites() -> dict[tuple[str, str], list[tuple[bool, ast.Call]]]:
     sites: dict[tuple[str, str], list[tuple[bool, ast.Call]]] = {}
-    for path in sorted((ROOT / "app").rglob("*.py")):
+    # app/ і спільний пакет botkit/ (2FA-код, алерти healthcheck, попередження про ліміт живуть там)
+    paths = [*(ROOT / "app").rglob("*.py"), *(p for p in (ROOT / "botkit").rglob("*.py") if "tests" not in p.parts)]
+    for path in sorted(paths):
         rel = path.relative_to(ROOT).as_posix()
         for func, in_loop, call in _send_call_sites(path):
             sites.setdefault((rel, func), []).append((in_loop, call))

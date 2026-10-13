@@ -20,7 +20,7 @@ from nicegui import ui
 from nicegui.testing.user_interaction import UserInteraction
 from sqlalchemy import select
 
-from app.admin import auth
+from botkit.admin import auth
 from app.config import settings
 from app.database.models import Admin, AdminAction, PriceHistory, PriceTracker, ScrapeLog, User
 from app.database.session import get_session

@@ -42,7 +42,7 @@ from urllib.parse import urlparse
 
 import structlog
 
-from app.services.scrapers import netguard
+from botkit import netguard
 from app.config import settings
 
 logger = structlog.get_logger(__name__)

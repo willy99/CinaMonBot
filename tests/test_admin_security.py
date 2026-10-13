@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.admin import auth
-from app.admin import queries as q
+from botkit.admin import auth
+from botkit.admin import queries as aq
 from app.config import settings
 from tests.admin_helpers import PASSWORD, login, make_admin, reset_auth_state
 
@@ -20,7 +20,7 @@ async def test_deactivation_revokes_open_session(user):
     a = await make_admin()
     await make_admin("second")
     await login(user)
-    await q.set_admin_active(a.id, False)
+    await aq.set_admin_active(a.id, False)
     auth.forget_session_cache()
     await user.open("/users")
     await user.should_see("Увійти", retries=40)
@@ -29,7 +29,7 @@ async def test_deactivation_revokes_open_session(user):
 async def test_password_change_revokes_other_sessions(user):
     a = await make_admin()
     await login(user)
-    await q.set_admin_password(a.id, auth.hash_password("another-pass-42"))
+    await aq.set_admin_password(a.id, auth.hash_password("another-pass-42"))
     auth.forget_session_cache()
     await user.open("/")
     await user.should_see("Увійти", retries=40)
@@ -61,9 +61,9 @@ async def test_db_lockout_ignores_ip():
 async def test_ensure_owner_promotes_oldest_active():
     first = await make_admin("first", role="admin")
     await make_admin("second", role="admin")
-    assert await q.ensure_owner() == "first"
-    assert await q.ensure_owner() is None
-    assert [a["role"] for a in await q.admins_list() if a["id"] == first.id] == ["owner"]
+    assert await aq.ensure_owner() == "first"
+    assert await aq.ensure_owner() is None
+    assert [a["role"] for a in await aq.admins_list() if a["id"] == first.id] == ["owner"]
 
 
 @pytest.mark.parametrize("path,expected", [("/users", "/users"), ("//evil.example", "/"), ("/\\evil.example", "/"),

@@ -131,3 +131,8 @@ def _add_missing_columns(sync_conn, base) -> list[str]:
 
 async def close_engine() -> None:
     await engine.dispose()
+
+
+# Контекст спільного пакета botkit (налаштування, сесія, моделі) — у кожному процесі, що працює з базою.
+# Імпорт у кінці: botkit_setup бере get_session / legacy_upgrade саме з цього модуля.
+import app.botkit_setup  # noqa: E402,F401

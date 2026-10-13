@@ -436,7 +436,7 @@ class _Handler(BaseHTTPRequestHandler):
 @pytest.mark.asyncio
 async def test_real_chromium_renders_local_page(monkeypatch):
     # тестова сторінка на 127.0.0.1 — netguard (SSRF) таке блокує, тож тут дозволяємо явно
-    from app.services.scrapers import netguard
+    from botkit import netguard
 
     async def allow(host):
         return True

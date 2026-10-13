@@ -22,7 +22,7 @@ from typing import Iterator
 
 from nicegui import ui
 
-from app.admin.auth import current_admin, logout
+from botkit.admin.auth import current_admin, logout
 from app.admin.i18n import (
     ADMIN_LANGUAGES, adate, admin_lang, amoney, anum, at, set_admin_lang, set_theme_mode, theme_mode,
 )
@@ -247,7 +247,7 @@ def settings_switches() -> None:
 
 
 async def _recheck_session() -> None:
-    from app.admin.auth import check_session
+    from botkit.admin.auth import check_session
     if not await check_session():
         ui.navigate.to("/login")
 

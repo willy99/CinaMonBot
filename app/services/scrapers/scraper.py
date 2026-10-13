@@ -38,7 +38,7 @@ import structlog
 from bs4 import BeautifulSoup, Tag, UnicodeDammit
 
 from app.config import settings
-from app.services.scrapers import netguard
+from botkit import netguard
 from app.services.scrapers import registry
 from app.services.scrapers.extract import extract_product, parse_price_text
 from app.services.scrapers.render import RenderError, RenderUnavailable, get_renderer, render_fallback_enabled

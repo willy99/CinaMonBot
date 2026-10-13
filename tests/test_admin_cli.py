@@ -17,7 +17,8 @@ from collections.abc import Awaitable, Callable
 import pytest
 from sqlalchemy import select
 
-from app.admin import auth, cli
+from app.admin import cli
+from botkit.admin import auth
 from app.database.models import Admin, Base
 from app.database.session import engine, get_session
 

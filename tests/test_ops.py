@@ -13,14 +13,15 @@ import pytest
 
 from app.database.models import Heartbeat
 from app.database.session import get_session
-from app.ops import backup as bk
-from app.ops import healthcheck as hc
-from app.services import heartbeat
+from app.config import settings
+from botkit.ops import backup as bk
+from botkit.ops import healthcheck as hc
+from botkit.ops import heartbeat
 
 
 @pytest.fixture
 def backup_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(bk.settings, "BACKUP_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "BACKUP_DIR", str(tmp_path))
     return tmp_path
 
 
@@ -62,8 +63,8 @@ class Recorder:
 @pytest.fixture
 def health_env(tmp_path, monkeypatch):
     monkeypatch.setattr(hc, "STATE_FILE", tmp_path / "state.json")
-    monkeypatch.setattr(hc.settings, "HEALTHCHECK_PING_URL", "https://hc-ping.example/uuid")
-    monkeypatch.setattr(hc.settings, "API_HEALTH_URL", "")
+    monkeypatch.setattr(settings, "HEALTHCHECK_PING_URL", "https://hc-ping.example/uuid")
+    monkeypatch.setattr(settings, "API_HEALTH_URL", "")
     return Recorder()
 
 

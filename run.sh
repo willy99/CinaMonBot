@@ -13,6 +13,7 @@
 #   ./run.sh logrotate  один раз: ротація логів pm2 (pm2-logrotate, 10 МБ × 14)
 #   ./run.sh audit      відомі CVE у залежностях (pip-audit по requirements.txt)
 #   ./run.sh lock       перегенерувати requirements.txt (з хешами) з requirements.in
+#   ./run.sh botkit-pull [гілка]  оновити спільний пакет botkit/ з ~/work/botkit (git subtree)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -88,11 +89,18 @@ case "${1:-start}" in
     [[ -x "$PY" ]] || { echo "Немає venv"; exit 1; }
     ./venv/bin/pip-audit -r requirements.txt --require-hashes --disable-pip
     ;;
+  botkit-pull)
+    # Спільний пакет (див. botkit/README.md). Робоче дерево має бути закомічене.
+    git diff --quiet && git diff --cached --quiet || { echo "Спершу закоміть зміни (git subtree вимагає чисте дерево)"; exit 1; }
+    git subtree pull --prefix=botkit "${BOTKIT_REPO:-$HOME/work/botkit}" "${2:-main}" --squash \
+      -m "botkit: оновити з ${BOTKIT_REPO:-~/work/botkit} (${2:-main})"
+    echo "Далі: ./run.sh test"
+    ;;
   lock)
     command -v uv >/dev/null || { echo "Немає uv: brew install uv"; exit 1; }
     uv pip compile requirements.in --generate-hashes --python-version 3.11 -o requirements.txt
     echo "Далі: venv/bin/pip install --require-hashes -r requirements.txt && ./run.sh test && ./run.sh audit"
     ;;
   *)
-    sed -n '2,16p' "$0"; exit 1 ;;
+    sed -n '2,17p' "$0"; exit 1 ;;
 esac

@@ -18,7 +18,7 @@ from decimal import Decimal
 from nicegui import ui
 from nicegui.testing.user_interaction import UserInteraction
 
-from app.admin import auth
+from botkit.admin import auth
 from app.database.models import Admin, PriceTracker, User
 from app.database.session import get_session
 

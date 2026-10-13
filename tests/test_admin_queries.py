@@ -15,8 +15,9 @@ from types import SimpleNamespace
 
 import pytest_asyncio
 
-from app.admin import auth
+from botkit.admin import auth
 from app.admin import queries as q
+from botkit.admin import queries as aq
 from app.timeutil import fmt, kyiv_date_key
 from app.config import settings
 from app.database.models import (
@@ -312,37 +313,37 @@ async def test_trackers_list_price_none(db):
 # ─── Admins ──────────────────────────────────────────────────────
 
 async def test_create_admin_lowercases_and_exists(db):
-    a = await q.create_admin("  NewAdmin ", "hash", 5)
+    a = await aq.create_admin("  NewAdmin ", "hash", 5)
     assert a.username == "newadmin" and a.telegram_id == 5 and a.is_active
-    assert await q.admin_exists("NEWADMIN") is True
-    assert await q.admin_exists("newadmin ") is True
-    assert await q.admin_exists("other") is False
-    rows = await q.admins_list()
+    assert await aq.admin_exists("NEWADMIN") is True
+    assert await aq.admin_exists("newadmin ") is True
+    assert await aq.admin_exists("other") is False
+    rows = await aq.admins_list()
     assert len(rows) == 1
     assert rows[0]["username"] == "newadmin" and rows[0]["last_login"] == "ніколи" and rows[0]["telegram_id"] == 5
 
 
 async def test_admin_mutations(db):
-    a = await q.create_admin("one", "hash", None)
-    b = await q.create_admin("two", "hash", None)
-    assert await q.admins_count_active() == 2
+    a = await aq.create_admin("one", "hash", None)
+    b = await aq.create_admin("two", "hash", None)
+    assert await aq.admins_count_active() == 2
 
-    assert await q.set_admin_active(b.id, False) is True
-    assert await q.admins_count_active() == 1
-    assert await q.set_admin_active("no-such", False) is False
+    assert await aq.set_admin_active(b.id, False) is True
+    assert await aq.admins_count_active() == 1
+    assert await aq.set_admin_active("no-such", False) is False
 
-    assert await q.set_admin_password(a.id, auth.hash_password("new-password-1")) is True
-    assert await q.set_admin_password("no-such", "x") is False
-    assert await q.set_admin_telegram(a.id, 777) is True
-    assert await q.set_admin_telegram("no-such", 1) is False
+    assert await aq.set_admin_password(a.id, auth.hash_password("new-password-1")) is True
+    assert await aq.set_admin_password("no-such", "x") is False
+    assert await aq.set_admin_telegram(a.id, 777) is True
+    assert await aq.set_admin_telegram("no-such", 1) is False
 
     async with get_session() as s:
         fresh = await s.get(Admin, a.id)
         assert auth.verify_password("new-password-1", fresh.password_hash) and fresh.telegram_id == 777
         assert (await s.get(Admin, b.id)).is_active is False
 
-    assert await q.set_admin_telegram(a.id, None) is True
-    rows = await q.admins_list()
+    assert await aq.set_admin_telegram(a.id, None) is True
+    rows = await aq.admins_list()
     assert [(r["username"], r["active"], r["telegram_id"]) for r in rows] == [("one", True, ""), ("two", False, "")]
 
 
@@ -353,8 +354,8 @@ async def test_audit_log_newest_first_with_limit(db):
             AdminAction(admin_username="b", action="second", details="d2", created_at=utc(hours=2)),
             AdminAction(admin_username="c", action="third", created_at=utc(hours=1)),
         ])
-    rows = await q.audit_log()
+    rows = await aq.audit_log()
     assert [r["action"] for r in rows] == ["third", "second", "first"]
     assert rows[2]["target"] == "t1" and rows[2]["details"] == "" and rows[1]["details"] == "d2"
-    assert [r["action"] for r in await q.audit_log(limit=2)] == ["third", "second"]
-    assert await q.audit_log() != [] and rows[0]["when"] != "—"
+    assert [r["action"] for r in await aq.audit_log(limit=2)] == ["third", "second"]
+    assert await aq.audit_log() != [] and rows[0]["when"] != "—"

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from app.admin import queries as q
+from botkit.admin import queries as aq
 from app.database.models import Notification, NotificationStatus, PriceHistory, PriceTracker, TrackerStatus, User
 from app.database.session import get_session
 
@@ -79,8 +80,8 @@ async def test_checks_page(db):
 
 
 async def _login(user):
-    from app.admin import auth
-    await q.create_admin("tester", auth.hash_password("test-pass-2026"), 1)
+    from botkit.admin import auth
+    await aq.create_admin("tester", auth.hash_password("test-pass-2026"), 1)
     await user.open("/login")
     user.find("Логін").type("tester")
     user.find("Пароль").type("test-pass-2026")

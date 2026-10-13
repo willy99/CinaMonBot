@@ -14,7 +14,7 @@ from sqlalchemy import and_, case, desc, func, or_, select
 
 from app.config import settings
 from app.database.models import (
-    Admin, AdminAction, Feedback, Notification, NotificationStatus,
+    Feedback, Notification, NotificationStatus,
     PriceHistory, PriceTracker, ScrapeLog, SubscriptionTier, TrackerStatus, User,
 )
 from app.database.session import get_session
@@ -427,107 +427,7 @@ async def trackers_list(status: str = "all", source: str = "all", search: str = 
 
 # ─── Admins ──────────────────────────────────────────────────────
 
-async def admins_list() -> list[dict]:
-    async with get_session() as s:
-        rows = (await s.execute(select(Admin).order_by(Admin.created_at.asc()))).scalars().all()
-    return [{
-        "id": a.id, "username": a.username, "telegram_id": a.telegram_id or "",
-        "active": a.is_active, "role": a.role,
-        "last_login": fmt(a.last_login_at, "%d.%m.%Y %H:%M", "ніколи"),
-        "created": fmt(a.created_at, "%d.%m.%Y", "—"),
-    } for a in rows]
-
-
-async def admins_count_active() -> int:
-    async with get_session() as s:
-        return (await s.execute(select(func.count()).select_from(Admin).where(Admin.is_active == True))).scalar_one()
-
-
-async def create_admin(username: str, password_hash: str, telegram_id: int | None, role: str = "admin") -> Admin:
-    async with get_session() as s:
-        a = Admin(username=username.strip().lower(), password_hash=password_hash,
-                  telegram_id=telegram_id, is_active=True, role=role)
-        s.add(a)
-        await s.flush()
-        return a
-
-
-async def admin_exists(username: str) -> bool:
-    async with get_session() as s:
-        return (await s.execute(
-            select(func.count()).select_from(Admin).where(Admin.username == username.strip().lower())
-        )).scalar_one() > 0
-
-
-async def set_admin_active(admin_id: str, active: bool) -> bool:
-    async with get_session() as s:
-        a = await s.get(Admin, admin_id)
-        if not a:
-            return False
-        a.is_active = active
-        a.session_version += 1
-    return True
-
-
-async def set_admin_password(admin_id: str, password_hash: str) -> bool:
-    async with get_session() as s:
-        a = await s.get(Admin, admin_id)
-        if not a:
-            return False
-        a.password_hash = password_hash
-        a.session_version += 1
-    return True
-
-
-async def set_admin_telegram(admin_id: str, telegram_id: int | None) -> bool:
-    async with get_session() as s:
-        a = await s.get(Admin, admin_id)
-        if not a:
-            return False
-        a.telegram_id = telegram_id
-        a.session_version += 1
-    return True
-
-
-async def set_admin_role(admin_id: str, role: str) -> bool:
-    async with get_session() as s:
-        a = await s.get(Admin, admin_id)
-        if not a:
-            return False
-        a.role = role
-        a.session_version += 1
-    return True
-
-
-async def owners_count_active() -> int:
-    async with get_session() as s:
-        return (await s.execute(select(func.count()).select_from(Admin).where(
-            Admin.is_active == True, Admin.role == "owner"))).scalar_one()  # noqa: E712
-
-
-async def ensure_owner() -> str | None:
-    """Якщо серед активних адмінів немає owner — найстаріший активний стає owner. Повертає його логін."""
-    async with get_session() as s:
-        active = (await s.execute(
-            select(Admin).where(Admin.is_active == True).order_by(Admin.created_at.asc())  # noqa: E712
-        )).scalars().all()
-        if not active or any(a.role == "owner" for a in active):
-            return None
-        active[0].role = "owner"
-        active[0].session_version += 1
-        return active[0].username
-
-
-async def audit_log(limit: int = 50) -> list[dict]:
-    async with get_session() as s:
-        rows = (await s.execute(
-            select(AdminAction).order_by(AdminAction.created_at.desc()).limit(limit)
-        )).scalars().all()
-    return [{
-        "when": fmt(a.created_at, "%d.%m.%Y %H:%M", "—"),
-        "admin": a.admin_username, "action": a.action,
-        "target": a.target or "", "details": a.details or "",
-    } for a in rows]
+# Запити про адмінів і журнал дій — botkit.admin.queries (спільний пакет)
 
 
 # ─── Platforms ───────────────────────────────────────────────────

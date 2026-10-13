@@ -6,16 +6,17 @@
 """
 import sys
 
-from app.logs import setup_logging
+from botkit.logs import setup_logging
 
 if __name__ == "__main__":
     setup_logging()
+    from app.database.session import close_engine          # також налаштовує контекст botkit
+    from botkit.ops import backup, healthcheck
+
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "backup":
-        from app.ops.backup import run
-    elif cmd == "healthcheck":
-        from app.ops.healthcheck import run
-    else:
-        print(__doc__)
-        sys.exit(2)
-    sys.exit(run())
+        sys.exit(backup.run())
+    if cmd == "healthcheck":
+        sys.exit(healthcheck.run(close_engine))
+    print(__doc__)
+    sys.exit(2)

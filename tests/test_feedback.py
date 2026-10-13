@@ -9,8 +9,9 @@ from unittest.mock import AsyncMock, patch
 from nicegui import ui
 from sqlalchemy import select
 
-from app.admin import auth
+from botkit.admin import auth
 from app.admin import queries as q
+from botkit.admin import queries as aq
 from app.bot.handlers import main as h
 from app.database.models import Feedback, User
 from app.database.session import get_session
@@ -215,7 +216,7 @@ async def test_feedback_queries(db):
 # ─── Дашборд: сторінка /feedback і /media ────────────────────────
 
 async def _login(user) -> None:
-    await q.create_admin("tester", auth.hash_password("correct-horse-9"), telegram_id=None)
+    await aq.create_admin("tester", auth.hash_password("correct-horse-9"), telegram_id=None)
     await user.open("/login")
     user.find("Логін").type("tester")
     user.find("Пароль").type("correct-horse-9")
@@ -278,7 +279,7 @@ async def test_feedback_dialog_marks_read_and_replies(db, user):
     assert chat_id == 14 and text == t("en", "feedback_reply_header", text="Answer!")
     got = await q.feedback_get(fb.id)
     assert got["status"] == "replied" and got["reply_text"] == "Answer!" and got["replied_by"] == "tester"
-    log = await q.audit_log()
+    log = await aq.audit_log()
     assert log[0]["action"] == "feedback_reply" and log[0]["target"] == "14" and log[0]["details"] == "Answer!"
 
 
@@ -290,7 +291,7 @@ async def test_media_route_requires_login(user, db):
 
 async def test_media_route_streams_photo_inline_and_404s_unknown(user, db):
     await _login(user)
-    from app.admin import telegram as tg
+    from botkit.admin import telegram as tg
 
     async def fake_path(file_id: str):
         return "photos/file_1.jpg" if file_id == "photo-file-id" else (

@@ -62,7 +62,7 @@ async def db():
 @pytest.fixture(autouse=True)
 def _offline_dns(monkeypatch):
     """Тести не ходять у DNS: будь-який домен — публічна адреса; літеральні IP netguard перевіряє як є."""
-    from app.services.scrapers import netguard
+    from botkit import netguard
 
     async def fake_resolve(host: str) -> list[str]:
         return ["93.184.216.34"]
@@ -70,5 +70,5 @@ def _offline_dns(monkeypatch):
     netguard.clear_cache()
     from app.scheduler import breaker
     breaker.reset()
-    from app.services import ratelimit
+    from botkit import ratelimit
     ratelimit.reset()

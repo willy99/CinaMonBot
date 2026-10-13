@@ -701,7 +701,7 @@ async def test_transient_errors_eventually_disable_dead_link(db, monkeypatch):
 
 
 async def test_dispatch_beats_heartbeat_even_when_idle(db):
-    from app.services import heartbeat
+    from botkit.ops import heartbeat
     await pc.dispatch_price_checks(make_bot())
     st = await heartbeat.status()
     assert st["seen"] and not st["stale"]

@@ -21,8 +21,8 @@ import respx
 from nicegui import ui
 from sqlalchemy import select
 
-from app.admin import auth
-from app.admin import queries as q
+from botkit.admin import auth
+from botkit.admin import queries as aq
 from app.config import settings
 from app.database.models import Admin, AdminAction
 from app.database.session import get_session
@@ -237,7 +237,7 @@ async def test_send_telegram_message_network_error_is_false():
 # ─── authenticate / mark_logged_in / audit (БД) ─────────────────
 
 async def test_authenticate_paths(db):
-    await q.create_admin("Tester", auth.hash_password(PASSWORD), None)
+    await aq.create_admin("Tester", auth.hash_password(PASSWORD), None)
     assert await auth.authenticate("unknown", PASSWORD) is None
     assert await auth.authenticate("tester", "wrong-password-1") is None
     admin = await auth.authenticate("  TESTER ", PASSWORD)
@@ -245,13 +245,13 @@ async def test_authenticate_paths(db):
 
 
 async def test_authenticate_inactive_admin(db):
-    a = await q.create_admin("tester", auth.hash_password(PASSWORD), None)
-    await q.set_admin_active(a.id, False)
+    a = await aq.create_admin("tester", auth.hash_password(PASSWORD), None)
+    await aq.set_admin_active(a.id, False)
     assert await auth.authenticate("tester", PASSWORD) is None
 
 
 async def test_mark_logged_in_sets_last_login(db):
-    a = await q.create_admin("tester", auth.hash_password(PASSWORD), None)
+    a = await aq.create_admin("tester", auth.hash_password(PASSWORD), None)
     async with get_session() as s:
         assert (await s.get(Admin, a.id)).last_login_at is None
     await auth.mark_logged_in(a.id)

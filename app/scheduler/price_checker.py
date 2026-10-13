@@ -20,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
 from app.scheduler import breaker
-from app.services import heartbeat
+from botkit.ops import heartbeat
 from app.config import settings
 from app.database.session import get_session
 from app.database.models import (

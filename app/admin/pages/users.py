@@ -6,7 +6,7 @@ import json
 
 from nicegui import ui
 
-from app.admin import auth
+from botkit.admin import auth
 from app.admin import queries as q
 from app.admin.i18n import adate, at, event_label, slot_labels
 from app.admin.theme import (

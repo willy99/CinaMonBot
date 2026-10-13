@@ -22,7 +22,7 @@ from nicegui import app, ui
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
-from app.logs import setup_logging
+from botkit.logs import setup_logging
 from app.database.migrate import ensure_schema
 from app.database.session import close_engine
 
@@ -47,7 +47,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         if path.startswith("/_nicegui") or path in PUBLIC_PATHS:
             return await call_next(request)
-        from app.admin.auth import check_session
+        from botkit.admin.auth import check_session
         if not await check_session():
             if request.method == "GET" and not path.startswith("/api"):
                 app.storage.user["referrer_path"] = path
@@ -61,11 +61,11 @@ app.add_middleware(AuthMiddleware)
 @app.on_startup
 async def _startup() -> None:
     await ensure_schema()
-    from app.admin import queries as q
-    promoted = await q.ensure_owner()
+    from botkit.admin import queries as aq
+    promoted = await aq.ensure_owner()
     if promoted:
         logger.warning("admin_owner_assigned", username=promoted)
-    if await q.admins_count_active() == 0:
+    if await aq.admins_count_active() == 0:
         logger.warning("no_admins", hint="python -m app.admin.cli create-admin <login> --telegram-id <id>")
     logger.info("admin_ready", host=settings.ADMIN_HOST, port=settings.ADMIN_PORT, twofa=settings.ADMIN_2FA_ENABLED)
 
@@ -81,7 +81,7 @@ async def _shutdown() -> None:
 
 @app.get("/media/{file_id}")
 async def media_file(file_id: str, name: str | None = None) -> Response:
-    from app.admin import telegram as tg
+    from botkit.admin import telegram as tg
 
     try:
         file_path = await tg.get_file_path(file_id)

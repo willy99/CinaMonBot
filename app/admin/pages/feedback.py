@@ -8,7 +8,7 @@ from urllib.parse import quote
 
 from nicegui import ui
 
-from app.admin import auth
+from botkit.admin import auth
 from app.admin import queries as q
 from app.admin.i18n import at, slot_labels
 from app.admin.theme import badge, card, kpi, layout, set_nav_badge, slot_classes

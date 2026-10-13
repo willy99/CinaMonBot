@@ -17,11 +17,11 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
 from app.config import settings
-from app.logs import setup_logging
+from botkit.logs import setup_logging
 from app.database.migrate import ensure_schema
 from app.database.session import close_engine
 from app.bot.handlers.main import router
-from app.bot.middlewares import BlockedUserMiddleware, UserRateLimitMiddleware
+from botkit.bot.middlewares import BlockedUserMiddleware, UserRateLimitMiddleware
 from app.scheduler.price_checker import setup_scheduler, scheduler
 from app.i18n import BOT_COMMANDS, DEFAULT_LANG
 

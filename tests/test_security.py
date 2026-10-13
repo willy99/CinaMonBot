@@ -7,8 +7,8 @@ import sys
 import httpx
 import pytest
 
-from app.admin import telegram as tg
-from app.logs import RedactingFormatter, redact, setup_logging
+from botkit.admin import telegram as tg
+from botkit.logs import RedactingFormatter, redact, setup_logging
 
 TOKEN = "123456789:AAH-abcdefghijklmnopqrstuvwxyz_0123"
 
@@ -65,7 +65,7 @@ def test_filename_header_injection_stripped():
 
 # ─── SSRF: посилання користувача не ведуть у внутрішню мережу ────
 
-from app.services.scrapers import netguard  # noqa: E402
+from botkit import netguard  # noqa: E402
 
 
 @pytest.mark.parametrize("url", [
@@ -126,7 +126,7 @@ async def test_blocked_user_middleware(db):
 
     from aiogram.types import CallbackQuery
 
-    from app.bot.middlewares import BlockedUserMiddleware
+    from botkit.bot.middlewares import BlockedUserMiddleware
     from app.database.models import User as DbUser
     from app.database.session import get_session
     from tests.helpers import make_callback, tg_user
@@ -151,7 +151,7 @@ async def test_blocked_user_middleware(db):
 async def test_bot_user_rate_limit_warns_once_and_drops(db):
     from unittest.mock import AsyncMock
 
-    from app.bot.middlewares import UserRateLimitMiddleware
+    from botkit.bot.middlewares import UserRateLimitMiddleware
     from tests.helpers import make_message, tg_user
 
     mw, handler = UserRateLimitMiddleware(), AsyncMock(return_value="ok")

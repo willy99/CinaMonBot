@@ -18,8 +18,8 @@ from datetime import timedelta
 
 from sqlalchemy import delete, select
 
-from app.admin import auth
-from app.admin import queries as q
+from botkit.admin import auth
+from botkit.admin import queries as aq
 from app.database.models import Notification, NotificationStatus, PriceHistory, PriceTracker, User
 from app.database.migrate import ensure_schema, migrate
 from app.database.session import get_session
@@ -186,7 +186,7 @@ async def digest_preview(telegram_id: int) -> int:
 async def _create(username: str, telegram_id: int | None, owner: bool = False) -> int:
     await ensure_schema()
     username = username.strip().lower()
-    if await q.admin_exists(username):
+    if await aq.admin_exists(username):
         print(f"Адмін {username!r} уже існує", file=sys.stderr)
         return 1
     pw = getpass.getpass("Пароль: ")
@@ -198,15 +198,15 @@ async def _create(username: str, telegram_id: int | None, owner: bool = False) -
     if problem:
         print(problem, file=sys.stderr)
         return 1
-    role = "owner" if owner or await q.admins_count_active() == 0 else "admin"   # перший адмін — owner
-    await q.create_admin(username, auth.hash_password(pw), telegram_id, role=role)
+    role = "owner" if owner or await aq.admins_count_active() == 0 else "admin"   # перший адмін — owner
+    await aq.create_admin(username, auth.hash_password(pw), telegram_id, role=role)
     print(f"Створено адміна {username!r}" + (f" з Telegram ID {telegram_id}" if telegram_id else " без 2FA Telegram ID"))
     return 0
 
 
 async def _list() -> int:
     await ensure_schema()
-    for a in await q.admins_list():
+    for a in await aq.admins_list():
         flag = "активний" if a["active"] else "вимкнений"
         print(f"{a['username']:<20} tg={a['telegram_id'] or '—':<12} {flag:<10} останній вхід: {a['last_login']}")
     return 0
