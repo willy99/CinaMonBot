@@ -13,7 +13,7 @@
 #   ./run.sh logrotate  один раз: ротація логів pm2 (pm2-logrotate, 10 МБ × 14)
 #   ./run.sh audit      відомі CVE у залежностях (pip-audit по requirements.txt)
 #   ./run.sh lock       перегенерувати requirements.txt (з хешами) з requirements.in
-#   ./run.sh botkit-pull [гілка]  оновити спільний пакет botkit/ з ~/work/botkit (git subtree)
+#   ./run.sh botkit-pull [гілка]  оновити спільний пакет botkit/ з GitHub willy99/botkit (git subtree)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -92,8 +92,9 @@ case "${1:-start}" in
   botkit-pull)
     # Спільний пакет (див. botkit/README.md). Робоче дерево має бути закомічене.
     git diff --quiet && git diff --cached --quiet || { echo "Спершу закоміть зміни (git subtree вимагає чисте дерево)"; exit 1; }
-    git subtree pull --prefix=botkit "${BOTKIT_REPO:-$HOME/work/botkit}" "${2:-main}" --squash \
-      -m "botkit: оновити з ${BOTKIT_REPO:-~/work/botkit} (${2:-main})"
+    # Звідки: GitHub за замовчуванням; BOTKIT_REPO=~/work/botkit ./run.sh botkit-pull — локальна копія до пушу
+    repo="${BOTKIT_REPO:-https://github.com/willy99/botkit.git}"
+    git subtree pull --prefix=botkit "$repo" "${2:-main}" --squash -m "botkit: оновити з $repo (${2:-main})"
     echo "Далі: ./run.sh test"
     ;;
   lock)
