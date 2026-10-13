@@ -269,9 +269,9 @@ async def test_send_weekly_digests_failure_isolation_and_blocked_marking(db):
     assert await dg.send_weekly_digests(bot, now=NOW) == 1
     assert sorted(c.kwargs["chat_id"] for c in bot.send_message.await_args_list) == [31, 32, 33]
     u31, u32, u33 = await load_user(31), await load_user(32), await load_user(33)
-    assert u31.last_digest_at is None and u31.is_blocked is False
-    assert u32.last_digest_at is None and u32.is_blocked is True
-    assert u33.last_digest_at == NOW and u33.is_blocked is False
+    assert u31.last_digest_at is None and u31.bot_blocked is False
+    assert u32.last_digest_at is None and u32.bot_blocked is True
+    assert u33.last_digest_at == NOW and u33.bot_blocked is False
 
 
 async def test_send_weekly_digests_build_error_for_one_user_does_not_stop_others(db):

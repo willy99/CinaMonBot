@@ -17,6 +17,7 @@ import pytest_asyncio
 
 from app.admin import auth
 from app.admin import queries as q
+from app.timeutil import fmt, kyiv_date_key
 from app.config import settings
 from app.database.models import (
     Admin, AdminAction, Notification, PriceHistory, PriceTracker, SubscriptionTier, TrackerStatus, User,
@@ -107,11 +108,12 @@ async def test_overview_empty_db(db):
 
 async def test_daily_series_zero_filled(seed):
     days = 7
-    since = (utc() - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    keys = [(since + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
+    # Доби — київські: ключі й межа "since" беруться з timeutil, групування — за київською датою
+    from app.timeutil import utc_range_for_kyiv_days
+    since, keys = utc_range_for_kyiv_days(days)
 
     def expected(dts: list[datetime]) -> dict[str, int]:
-        c = Counter(dt.strftime("%Y-%m-%d") for dt in dts if dt >= since)
+        c = Counter(kyiv_date_key(dt) for dt in dts if dt >= since)
         return {k: c.get(k, 0) for k in keys}
 
     series = await q.daily_series(days)
@@ -139,7 +141,7 @@ async def test_premium_expiring(seed):
     rows = await q.premium_expiring(14)
     assert [r["name"] for r in rows] == ["Carol"]
     assert rows[0]["days_left"] == 3
-    assert rows[0]["until"] == seed.carol_until.strftime("%d.%m.%Y")
+    assert rows[0]["until"] == fmt(seed.carol_until, "%d.%m.%Y")
     assert rows[0]["username"] == "" and rows[0]["telegram_id"] == 1003
     rows = await q.premium_expiring(40)
     assert [r["name"] for r in rows] == ["Carol", "Bob"]   # за датою закінчення
@@ -169,11 +171,11 @@ async def test_users_list_default(seed):
     by = {r["name"]: r for r in rows}
     assert by["Alice"]["trackers"] == 2 and by["Alice"]["trackers_active"] == 1
     assert by["Alice"]["username"] == "@alice" and by["Carol"]["username"] == ""
-    assert by["Bob"]["tier"] == "premium" and by["Bob"]["until"] == seed.bob_until.strftime("%d.%m.%Y")
+    assert by["Bob"]["tier"] == "premium" and by["Bob"]["until"] == fmt(seed.bob_until, "%d.%m.%Y")
     assert by["Eve"]["tier"] == "free" and by["Eve"]["until"] == "" and by["Eve"]["trackers"] == 0
     assert by["Dave"]["blocked"] is True and by["Alice"]["blocked"] is False
     assert by["Bob"]["lang"] == "en" and by["Bob"]["telegram_id"] == 1002
-    assert by["Alice"]["created"] == seed.alice.created_at.strftime("%d.%m.%Y")
+    assert by["Alice"]["created"] == fmt(seed.alice.created_at, "%d.%m.%Y")
 
 
 async def test_users_list_search(seed):
@@ -204,7 +206,7 @@ async def test_user_detail(seed):
 
     carol = await q.user_detail(seed.carol.id)
     assert carol["tier"] == "premium" and carol["trackers"][0]["currency"] == "USD"
-    assert carol["premium_until_str"] == seed.carol_until.strftime("%d.%m.%Y")
+    assert carol["premium_until_str"] == fmt(seed.carol_until, "%d.%m.%Y")
 
     bob = await q.user_detail(seed.bob.id)
     assert [n["status"] for n in bob["notifications"]] == ["failed", "sent"]
@@ -216,7 +218,7 @@ async def test_user_detail(seed):
 async def test_tracker_history_ascending_with_limit(seed):
     points = await q.tracker_history(seed.t1.id)
     assert [p for _, p in points] == [42000.0, 40500.0, 41000.0]
-    assert points[0][0] == seed.history[2][0].strftime("%Y-%m-%d %H:%M")
+    assert points[0][0] == fmt(seed.history[2][0], "%Y-%m-%d %H:%M")
     assert await q.tracker_history(seed.t1.id, limit=2) == points[:2]
     assert await q.tracker_history(seed.t2.id) == []
 

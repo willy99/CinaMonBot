@@ -74,11 +74,14 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db() -> None:
+    """Застаріле: адитивна міграція на спільному engine. Схему тепер веде Alembic — див. app/database/migrate.py."""
+    await legacy_upgrade(engine)
+
+
+async def legacy_upgrade(engine) -> None:
     """
-    Створює таблиці, яких немає, і додає колонки, яких бракує в наявних таблицях.
-    Це "адитивна міграція": достатньо оголосити колонку в моделі — при старті
-    вона з'явиться в базі (ALTER TABLE ... ADD COLUMN). Видалення/перейменування
-    колонок сюди не входить — для цього вже потрібен Alembic.
+    Шлях з баз, створених до Alembic: створює таблиці, яких немає, і додає колонки, яких бракує
+    (ALTER TABLE ... ADD COLUMN). Після цього migrate.py позначає базу ревізією.
     """
     from app.database.models import Base
     async with engine.begin() as conn:

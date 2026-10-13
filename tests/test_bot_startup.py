@@ -18,7 +18,7 @@ def _fake_bot() -> MagicMock:
 async def test_on_startup_sets_commands_per_language_and_default(monkeypatch):
     init_db = AsyncMock()
     setup_scheduler = MagicMock()
-    monkeypatch.setattr(bot_module, "init_db", init_db)
+    monkeypatch.setattr(bot_module, "ensure_schema", init_db)   # старт лише перевіряє схему (Alembic)
     monkeypatch.setattr(bot_module, "setup_scheduler", setup_scheduler)
     fake = _fake_bot()
 
@@ -49,7 +49,7 @@ async def test_on_startup_order_db_before_scheduler_before_commands(monkeypatch)
     async def init_db():
         order.append("init_db")
 
-    monkeypatch.setattr(bot_module, "init_db", init_db)
+    monkeypatch.setattr(bot_module, "ensure_schema", init_db)   # старт лише перевіряє схему (Alembic)
     monkeypatch.setattr(bot_module, "setup_scheduler", lambda b: order.append("scheduler"))
     fake = _fake_bot()
     fake.set_my_commands = AsyncMock(side_effect=lambda *a, **k: order.append("commands"))

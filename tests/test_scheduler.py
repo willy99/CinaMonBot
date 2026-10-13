@@ -334,7 +334,7 @@ async def test_notification_blocked_exception_marks_user_and_fails_row(db):
     bot = make_bot()
     bot.send_message = AsyncMock(side_effect=Exception("Telegram server says - Forbidden: bot was blocked by the user"))
     await _notify(bot, tr.id, PriceEventType.DECREASE, D("100"), D("90"))
-    assert (await load_user(user.id)).is_blocked is True
+    assert (await load_user(user.id)).bot_blocked is True
     notes = await notifications()
     assert len(notes) == 1 and notes[0].status == NotificationStatus.FAILED
     assert "bot was blocked" in notes[0].error_message and notes[0].telegram_message_id is None
@@ -346,7 +346,7 @@ async def test_notification_other_exception_fails_row_but_user_not_blocked(db):
     bot = make_bot()
     bot.send_message = AsyncMock(side_effect=Exception("Bad Request: chat not found"))
     await _notify(bot, tr.id, PriceEventType.DECREASE, D("100"), D("90"))
-    assert (await load_user(user.id)).is_blocked is False
+    assert (await load_user(user.id)).bot_blocked is False
     notes = await notifications()
     assert len(notes) == 1 and notes[0].status == NotificationStatus.FAILED and "chat not found" in notes[0].error_message
 
@@ -651,3 +651,57 @@ def test_setup_scheduler_registers_jobs(monkeypatch):
     finally:
         pc.scheduler.remove_all_jobs()
 
+
+
+async def test_notification_escapes_shop_title_and_url(db):
+    """Назва з сайту магазину й URL користувача не ламають HTML (інакше Telegram відхилить сповіщення)."""
+    user = await seed_user(1)
+    tr = await seed_tracker(user, title="Чохол <Samsung> AT&T", url="https://shop.example/item'><b>x")
+    bot = make_bot()
+    await _notify(bot, tr.id, PriceEventType.DECREASE, D("1000"), D("900"))
+    text = bot.send_message.await_args.kwargs["text"]
+    assert "Чохол &lt;Samsung&gt; AT&amp;T" in text and "<Samsung>" not in text
+    assert "href='https://shop.example/item&#x27;&gt;&lt;b&gt;x'" in text
+
+
+async def test_transient_error_pauses_domain_not_tracker(db, monkeypatch):
+    """A4: антибот / мережа — пауза домену; 5-та така помилка поспіль ще не робить трекер ERROR."""
+    from app.scheduler import breaker
+    user = await seed_user(1)
+    tr = await seed_tracker(user, errors=4)
+    patch_scrape(monkeypatch, ScrapeError(url=tr.canonical_url, reason="blocked"))
+    await pc.check_single_price(tr, make_bot())
+    fresh = await load_tracker(tr.id)
+    assert fresh.consecutive_errors == 5 and fresh.status == TrackerStatus.ACTIVE
+    assert breaker.is_open(tr.source)
+
+
+async def test_dispatch_skips_paused_domain_and_success_reopens(db, monkeypatch):
+    from app.scheduler import breaker
+    user = await seed_user(1)
+    tr = await seed_tracker(user)
+    mock = patch_scrape(monkeypatch, product(price="900"))
+    breaker.trip(tr.source, "blocked")
+    await pc.dispatch_price_checks(make_bot())
+    mock.assert_not_awaited()                                   # домен на паузі — не ходимо
+    breaker.reset()
+    breaker.trip(tr.source, "blocked", now=0.0)                 # пауза давно минула
+    await pc.dispatch_price_checks(make_bot())
+    mock.assert_awaited_once()
+    assert not breaker.snapshot()                               # успіх закрив запобіжник
+
+
+async def test_transient_errors_eventually_disable_dead_link(db, monkeypatch):
+    from app.scheduler import breaker
+    user = await seed_user(1)
+    tr = await seed_tracker(user, errors=breaker.TRANSIENT_ERROR_LIMIT - 1)
+    patch_scrape(monkeypatch, ScrapeError(url=tr.canonical_url, reason="blocked"))
+    await pc.check_single_price(tr, make_bot())
+    assert (await load_tracker(tr.id)).status == TrackerStatus.ERROR
+
+
+async def test_dispatch_beats_heartbeat_even_when_idle(db):
+    from app.services import heartbeat
+    await pc.dispatch_price_checks(make_bot())
+    st = await heartbeat.status()
+    assert st["seen"] and not st["stale"]

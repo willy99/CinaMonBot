@@ -21,7 +21,8 @@ from sqlalchemy import delete, select
 from app.admin import auth
 from app.admin import queries as q
 from app.database.models import Notification, NotificationStatus, PriceHistory, PriceTracker, User
-from app.database.session import get_session, init_db
+from app.database.migrate import ensure_schema, migrate
+from app.database.session import get_session
 
 # Старий баг логування: кожен SENT-рядок мав FAILED-двійника з такою помилкою
 BOGUS_ERROR_MARKER = "_make_filtering_bound_logger"
@@ -65,7 +66,7 @@ async def find_bogus_failed_notifications() -> list[Notification]:
 
 async def purge_bogus_failed_notifications(apply: bool) -> int:
     """Dry-run (apply=False) лише рахує; --apply видаляє рівно знайдені двійники. Повертає їх кількість."""
-    await init_db()
+    await ensure_schema()
     twins = await find_bogus_failed_notifications()
     if not twins:
         print("Хибних FAILED-сповіщень (двійників SENT) не знайдено")
@@ -131,7 +132,7 @@ async def find_kopecks_artifacts() -> tuple[list[PriceHistory], list[Notificatio
 
 async def fix_kopecks_artifacts(apply: bool) -> int:
     """Dry-run показує; --apply ділить ціну на 100 у price_history і видаляє сповіщення, породжені цими значеннями."""
-    await init_db()
+    await ensure_schema()
     rows, notifs = await find_kopecks_artifacts()
     if not rows:
         print("Артефактів бага з копійками не знайдено")
@@ -162,7 +163,7 @@ async def digest_preview(telegram_id: int) -> int:
     """
     from app.scheduler.digest import build_digest
 
-    await init_db()
+    await ensure_schema()
     async with get_session() as s:
         user = (await s.execute(select(User).where(User.telegram_id == telegram_id))).scalar_one_or_none()
     if not user:
@@ -182,8 +183,8 @@ async def digest_preview(telegram_id: int) -> int:
     return 0
 
 
-async def _create(username: str, telegram_id: int | None) -> int:
-    await init_db()
+async def _create(username: str, telegram_id: int | None, owner: bool = False) -> int:
+    await ensure_schema()
     username = username.strip().lower()
     if await q.admin_exists(username):
         print(f"Адмін {username!r} уже існує", file=sys.stderr)
@@ -197,13 +198,14 @@ async def _create(username: str, telegram_id: int | None) -> int:
     if problem:
         print(problem, file=sys.stderr)
         return 1
-    await q.create_admin(username, auth.hash_password(pw), telegram_id)
+    role = "owner" if owner or await q.admins_count_active() == 0 else "admin"   # перший адмін — owner
+    await q.create_admin(username, auth.hash_password(pw), telegram_id, role=role)
     print(f"Створено адміна {username!r}" + (f" з Telegram ID {telegram_id}" if telegram_id else " без 2FA Telegram ID"))
     return 0
 
 
 async def _list() -> int:
-    await init_db()
+    await ensure_schema()
     for a in await q.admins_list():
         flag = "активний" if a["active"] else "вимкнений"
         print(f"{a['username']:<20} tg={a['telegram_id'] or '—':<12} {flag:<10} останній вхід: {a['last_login']}")
@@ -216,6 +218,7 @@ def main() -> None:
     c = sub.add_parser("create-admin", help="створити адміна")
     c.add_argument("username")
     c.add_argument("--telegram-id", type=int, default=None, help="Telegram ID для 2FA-кодів")
+    c.add_argument("--owner", action="store_true", help="роль owner (керує адмінами); перший адмін — завжди owner")
     sub.add_parser("list-admins", help="список адмінів")
     p = sub.add_parser("purge-bogus-failed-notifications",
                        help="прибрати FAILED-двійники SENT-сповіщень від старого бага логування (dry-run без --apply)")
@@ -226,9 +229,10 @@ def main() -> None:
     d = sub.add_parser("digest-preview", help="показати, яким був би щотижневий дайджест для юзера зараз (без відправки)")
     d.add_argument("telegram_id", type=int)
     args = parser.parse_args()
+    migrate()                    # CLI запускають вручну й поодинці — можна одразу довести схему
 
     if args.cmd == "create-admin":
-        sys.exit(asyncio.run(_create(args.username, args.telegram_id)))
+        sys.exit(asyncio.run(_create(args.username, args.telegram_id, args.owner)))
     if args.cmd == "list-admins":
         sys.exit(asyncio.run(_list()))
     if args.cmd == "purge-bogus-failed-notifications":

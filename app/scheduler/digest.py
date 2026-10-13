@@ -167,13 +167,13 @@ async def send_weekly_digests(bot, now: datetime | None = None) -> int:
     """
     Шле дайджест кожному юзеру, що на нього підписаний (digest_enabled) і не заблокований.
     Адресат завжди user.telegram_id власника даних; тихий тиждень → нічого.
-    Помилка в одного юзера не зупиняє решту; "bot was blocked" → is_blocked=True.
+    Помилка в одного юзера не зупиняє решту; "bot was blocked" → bot_blocked=True.
     Повертає кількість надісланих повідомлень.
     """
     now = now or _now_naive()
     async with get_session() as session:
         users = (await session.execute(
-            select(User).where(User.digest_enabled.is_(True), User.is_blocked.is_(False))
+            select(User).where(User.digest_enabled.is_(True), User.is_blocked.is_(False), User.bot_blocked.is_(False))
         )).scalars().all()
 
     sent = 0
@@ -203,7 +203,7 @@ async def send_weekly_digests(bot, now: datetime | None = None) -> int:
                 async with get_session() as session:
                     db_user = await session.get(User, user.id)
                     if db_user:
-                        db_user.is_blocked = True
+                        db_user.bot_blocked = True
             continue
         async with get_session() as session:
             db_user = await session.get(User, user.id)

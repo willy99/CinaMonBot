@@ -13,9 +13,7 @@
 """
 from __future__ import annotations
 
-import logging
 import secrets
-import sys
 
 import structlog
 from fastapi import HTTPException, Request
@@ -24,9 +22,11 @@ from nicegui import app, ui
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
-from app.database.session import close_engine, init_db
+from app.logs import setup_logging
+from app.database.migrate import ensure_schema
+from app.database.session import close_engine
 
-logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+setup_logging()
 structlog.configure(
     processors=[
         structlog.stdlib.add_log_level,
@@ -47,8 +47,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         if path.startswith("/_nicegui") or path in PUBLIC_PATHS:
             return await call_next(request)
-        from app.admin.auth import current_admin
-        if not current_admin():
+        from app.admin.auth import check_session
+        if not await check_session():
             if request.method == "GET" and not path.startswith("/api"):
                 app.storage.user["referrer_path"] = path
             return RedirectResponse("/login")
@@ -60,8 +60,11 @@ app.add_middleware(AuthMiddleware)
 
 @app.on_startup
 async def _startup() -> None:
-    await init_db()
+    await ensure_schema()
     from app.admin import queries as q
+    promoted = await q.ensure_owner()
+    if promoted:
+        logger.warning("admin_owner_assigned", username=promoted)
     if await q.admins_count_active() == 0:
         logger.warning("no_admins", hint="python -m app.admin.cli create-admin <login> --telegram-id <id>")
     logger.info("admin_ready", host=settings.ADMIN_HOST, port=settings.ADMIN_PORT, twofa=settings.ADMIN_2FA_ENABLED)
@@ -78,7 +81,6 @@ async def _shutdown() -> None:
 
 @app.get("/media/{file_id}")
 async def media_file(file_id: str, name: str | None = None) -> Response:
-    from urllib.parse import quote
     from app.admin import telegram as tg
 
     try:
@@ -89,16 +91,9 @@ async def media_file(file_id: str, name: str | None = None) -> Response:
     except tg.TelegramFileError as e:
         raise HTTPException(status_code=413 if "large" in str(e) else 404, detail=str(e))
 
-    filename = (name or file_path.rsplit("/", 1)[-1] or "file").replace("\r", "").replace("\n", "")
-    ascii_name = filename.encode("ascii", "replace").decode("ascii").replace('"', "")
-    if ctype.startswith("image/"):
-        disposition = "inline"
-    else:
-        disposition = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
-    return Response(
-        content=data, media_type=ctype,
-        headers={"Content-Disposition": disposition, "Cache-Control": "private, max-age=3600"},
-    )
+    # inline — лише растрові картинки; SVG/HTML з фідбеку виконали б скрипт на origin адмінки
+    filename = name or file_path.rsplit("/", 1)[-1]
+    return Response(content=data, media_type=ctype, headers=tg.media_headers(ctype, filename))
 
 
 # Реєструємо сторінки (importlib, щоб не перекрити `app` з NiceGUI нашим пакетом app/)
@@ -119,5 +114,8 @@ if __name__ in {"__main__", "__mp_main__"}:
         show=False,
         favicon="🛡️",
         storage_secret=storage_secret,
+        # Своя назва cookie: cookie прив'язані до хоста, не порту — обидві адмінки на 127.0.0.1 інакше
+        # перезаписували б одна одній cookie «session» і викидали з сесії
+        session_middleware_kwargs={"session_cookie": "cinabot_admin_session", "same_site": "strict"},
         show_welcome_message=False,
     )

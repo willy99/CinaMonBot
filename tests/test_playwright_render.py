@@ -434,7 +434,13 @@ class _Handler(BaseHTTPRequestHandler):
 @pytest.mark.slow
 @pytest.mark.skipif(os.environ.get("RUN_BROWSER_TESTS") != "1", reason="RUN_BROWSER_TESTS=1 вмикає тест зі справжнім Chromium")
 @pytest.mark.asyncio
-async def test_real_chromium_renders_local_page():
+async def test_real_chromium_renders_local_page(monkeypatch):
+    # тестова сторінка на 127.0.0.1 — netguard (SSRF) таке блокує, тож тут дозволяємо явно
+    from app.services.scrapers import netguard
+
+    async def allow(host):
+        return True
+    monkeypatch.setattr(netguard, "host_is_public", allow)
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -450,3 +456,20 @@ async def test_real_chromium_renders_local_page():
     finally:
         await r.close()
         server.shutdown()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_no_browser_fallback_for_unknown_domain(fast, fake_render):
+    """N4: сторінку з довільного посилання користувача (домену немає в реєстрі) не відкриваємо в Chromium."""
+    url = "https://random-unknown-shop.example/item/1"
+    respx.get(url).mock(return_value=html_response(BOT_WALL_HTML))
+    result = await GenericScraper(url).scrape(url)
+    assert isinstance(result, ScrapeError) and fake_render["calls"] == []
+
+
+def test_chromium_launched_with_sandbox():
+    import inspect
+
+    from app.services.scrapers import render as render_mod
+    assert '"chromium_sandbox": True' in inspect.getsource(render_mod.BrowserRenderer)

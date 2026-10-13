@@ -14,7 +14,7 @@ from enum import StrEnum
 
 from sqlalchemy import (
     BigInteger, Boolean, DateTime, ForeignKey, Index,
-    Integer, Numeric, String, Text, func,
+    Integer, Numeric, String, Text, false, func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -77,7 +77,10 @@ class User(Base, TimestampMixin):
         String(16), default=SubscriptionTier.FREE, nullable=False
     )
     premium_until: Mapped[datetime | None] = mapped_column(DateTime)
+    # Заблокував АДМІН (дашборд): бот ігнорує апдейти, сповіщень немає
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Користувач сам заблокував бота (Telegram «bot was blocked»): не шлемо, поки знову не напише боту
+    bot_blocked: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
     # Щотижневий дайджест "що подешевшало" (можна вимкнути кнопкою в самому дайджесті)
     digest_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_digest_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -219,6 +222,13 @@ class Admin(Base, TimestampMixin):
     telegram_id: Mapped[int | None] = mapped_column(BigInteger)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # owner — керує адмінами; admin — решта дашборду
+    role: Mapped[str] = mapped_column(String(16), default="admin", server_default="admin", nullable=False)
+    # Збільшується при зміні пароля / 2FA / ролі / деактивації — усі чинні сесії цього адміна стають недійсними
+    session_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    # Антиперебір за логіном (незалежно від IP), переживає рестарт
+    failed_logins: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class AdminAction(Base):
@@ -326,3 +336,15 @@ class Feedback(Base):
         Index("ix_feedback_status_created", "status", "created_at"),
         Index("ix_feedback_telegram_id", "telegram_id"),
     )
+
+
+class Heartbeat(Base):
+    """
+    «Живий»-сигнал планувальника бота: зовнішня перевірка (python ops.py healthcheck) б'є тривогу,
+    якщо бот завис або впав.
+    """
+    __tablename__ = "heartbeats"
+
+    name: Mapped[str] = mapped_column(String(32), primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    info: Mapped[str | None] = mapped_column(Text)

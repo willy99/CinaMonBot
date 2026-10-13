@@ -278,18 +278,19 @@ def test_current_admin_outside_ui_context_is_none():
 
 async def test_login_session_current_admin_logout(db, user):
     await make_admin()
+    alice = await make_admin("alice", role="admin")
     await login(user)
 
     @ui.page("/_t_session")
-    def _page() -> None:
-        auth.login_session("id-x", "alice")
+    async def _page() -> None:
+        await auth.login_session(alice.id)
         cur = auth.current_admin()
-        ui.label(f"cur:{cur['username']}:{cur['id']}:{int(time.time() - cur['login_at'])}")
+        ui.label(f"cur:{cur['username']}:{cur['role']}:{int(time.time() - cur['login_at'])}")
         auth.logout()
         ui.label(f"after:{auth.current_admin()}")
 
     await user.open("/_t_session")
-    await user.should_see("cur:alice:id-x:0")
+    await user.should_see("cur:alice:admin:0")
     await user.should_see("after:None")
     # logout() зняв сесію — захищені сторінки знову ведуть на логін
     await user.open("/")

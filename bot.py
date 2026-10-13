@@ -8,8 +8,6 @@ Telegram-бот + планувальник перевірки цін. Один �
 Перед першим запуском: cp .env.example .env і заповнити BOT_TOKEN.
 """
 import asyncio
-import logging
-import sys
 
 import structlog
 from aiogram import Bot, Dispatcher
@@ -19,14 +17,17 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
 from app.config import settings
-from app.database.session import init_db, close_engine
+from app.logs import setup_logging
+from app.database.migrate import ensure_schema
+from app.database.session import close_engine
 from app.bot.handlers.main import router
+from app.bot.middlewares import BlockedUserMiddleware, UserRateLimitMiddleware
 from app.scheduler.price_checker import setup_scheduler, scheduler
 from app.i18n import BOT_COMMANDS, DEFAULT_LANG
 
 # ─── Logging setup ───────────────────────────────────────────────
 
-logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+setup_logging()
 structlog.configure(
     processors=[
         structlog.stdlib.add_log_level,
@@ -46,7 +47,7 @@ async def on_startup(bot: Bot) -> None:
     logger.info("starting", db=settings.DATABASE_URL.split("///")[-1])
 
     # Ініціалізуємо БД (створює таблиці якщо не існують)
-    await init_db()
+    await ensure_schema()
     logger.info("database_ready")
 
     # Приводимо статуси трекерів у відповідність до ліміту (старі дані, зміна правил)
@@ -95,6 +96,11 @@ async def main() -> None:
     # Мінус: стан FSM губиться при рестарті (юзер знову починає /add)
     # Це не критично — просто попросить посилання ще раз
     dp = Dispatcher(storage=MemoryStorage())
+    blocked = BlockedUserMiddleware()   # заблоковані адміном — нікуди далі
+    limited = UserRateLimitMiddleware()  # ≤ USER_REQUESTS_PER_MINUTE на користувача
+    for observer in (dp.message, dp.callback_query, dp.pre_checkout_query):
+        observer.outer_middleware(blocked)
+        observer.outer_middleware(limited)
     dp.include_router(router)
 
     dp.startup.register(on_startup)

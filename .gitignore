@@ -23,3 +23,5 @@ logs/
 .idea/
 .coverage
 htmlcov/
+backups/
+.migrate.lock

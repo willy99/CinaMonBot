@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+from html import escape as html_escape
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 
@@ -18,6 +19,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
+from app.scheduler import breaker
+from app.services import heartbeat
 from app.config import settings
 from app.database.session import get_session
 from app.database.models import (
@@ -137,11 +140,11 @@ async def _pause_excess_trackers(user, bot) -> None:
         return  # все в межах ліміту
 
     lang = user.lang
-    paused_titles = [(tr.title or t(lang, "item"))[:40] for tr in paused]
+    paused_titles = [html_escape((tr.title or t(lang, "item"))[:40], quote=False) for tr in paused]   # HTML-повідомлення
     logger.info("trackers_paused_on_expiry", user_id=user.id, paused_count=len(paused))
 
     # Повідомляємо юзера
-    if not user.is_blocked and bot:
+    if not user.is_blocked and not user.bot_blocked and bot:
         paused_list = "\n".join(f"  ⏸ {title}" for title in paused_titles)
         msg_text = t(
             lang, "premium_expired",
@@ -159,6 +162,16 @@ async def _pause_excess_trackers(user, bot) -> None:
 
 
 async def dispatch_price_checks(bot) -> None:
+    try:
+        await _dispatch_price_checks(bot)
+    finally:
+        try:
+            await heartbeat.beat(heartbeat.SCHEDULER, paused=breaker.snapshot())
+        except Exception as e:  # noqa: BLE001 — heartbeat не має ламати планувальник
+            logger.warning("heartbeat_failed", error=str(e)[:200])
+
+
+async def _dispatch_price_checks(bot) -> None:
     logger.info("dispatch_started")
 
     async with get_session() as session:
@@ -183,6 +196,8 @@ async def dispatch_price_checks(bot) -> None:
             if user.is_premium
             else settings.FREE_TIER_CHECK_INTERVAL_MINUTES
         )
+        if tracker.source and breaker.is_open(tracker.source):
+            continue                  # магазин тимчасово недоступний — last_checked_at не чіпаємо
         if tracker.last_checked_at is None:
             to_check.append(tracker)
         else:
@@ -284,8 +299,12 @@ async def check_single_price(tracker: PriceTracker, bot) -> None:
         if isinstance(result, ScrapeError):
             db_tracker.consecutive_errors += 1
             db_tracker.last_checked_at = now
+            transient = breaker.is_transient(result.reason)
+            if transient and tracker.source:
+                breaker.trip(tracker.source, result.reason)     # пауза домену, а не вирок товару
+            limit = breaker.TRANSIENT_ERROR_LIMIT if transient else breaker.ERROR_LIMIT
 
-            if db_tracker.consecutive_errors >= 5:
+            if db_tracker.consecutive_errors >= limit:
                 db_tracker.status = TrackerStatus.ERROR
                 logger.warning(
                     "tracker_auto_disabled",
@@ -307,6 +326,8 @@ async def check_single_price(tracker: PriceTracker, bot) -> None:
         db_tracker.image_url = result.image_url
         db_tracker.last_checked_at = now
         db_tracker.consecutive_errors = 0
+        if tracker.source:
+            breaker.success(tracker.source)
 
         # Пишемо в історію
         if result.price is not None:
@@ -422,20 +443,23 @@ async def _send_notification(
     from app.database.models import User
 
     user = await session.get(User, tracker.user_id)
-    if not user or user.is_blocked:
+    if not user or user.is_blocked or user.bot_blocked:
         return
 
     # Формуємо текст залежно від типу події — мовою і валютою юзера/трекера
     lang = user.lang
     cur = tracker.currency
-    title_short = (tracker.title or t(lang, "item"))[:60]
+    # Назва й URL — з сайту магазину / від користувача: екрануємо, інакше «AT&T» чи «<Samsung>» ламають
+    # сповіщення (Telegram 400), а апостроф у URL виходить з атрибута href='…'
+    title_short = html_escape((tracker.title or t(lang, "item"))[:60], quote=False)
+    safe_url = html_escape(tracker.canonical_url or "", quote=True)
 
     if event == PriceEventType.RESTOCK:
         text = t(
             lang, "notif_restock",
             title=title_short,
             price=fmt_money(new_price, cur, lang),
-            url=tracker.canonical_url,
+            url=safe_url,
         )
     elif event == PriceEventType.TARGET_REACHED and tracker.target_percent:
         # Ціль у відсотках ("впаде на 15%") — показуємо відсоток і базову ціну
@@ -446,7 +470,7 @@ async def _send_notification(
             price=fmt_money(new_price, cur, lang),
             baseline=fmt_money(tracker.baseline_price, cur, lang),
             target=fmt_money(tracker.target_price, cur, lang),
-            url=tracker.canonical_url,
+            url=safe_url,
         )
     elif event == PriceEventType.TARGET_REACHED:
         text = t(
@@ -454,7 +478,7 @@ async def _send_notification(
             title=title_short,
             price=fmt_money(new_price, cur, lang),
             target=fmt_money(tracker.target_price, cur, lang),
-            url=tracker.canonical_url,
+            url=safe_url,
         )
     else:  # DECREASE
         diff = old_price - new_price if (old_price and new_price) else Decimal(0)
@@ -466,7 +490,7 @@ async def _send_notification(
             old=fmt_money(old_price, cur, lang),
             new=fmt_money(new_price, cur, lang),
             diff=fmt_money(diff, cur, lang),
-            url=tracker.canonical_url,
+            url=safe_url,
         )
 
     # Кнопка "🔕 Не сповіщати…" для саме цього типу події + "⚙️ Налаштування"
@@ -499,7 +523,7 @@ async def _send_notification(
     except Exception as e:
         # Якщо юзер заблокував бота
         if "bot was blocked" in str(e).lower():
-            user.is_blocked = True
+            user.bot_blocked = True          # не адмінське блокування — знімається, щойно юзер напише боту
         session.add(Notification(
             user_id=user.id,
             tracker_id=tracker.id,

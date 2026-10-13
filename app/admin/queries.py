@@ -18,6 +18,7 @@ from app.database.models import (
     PriceHistory, PriceTracker, ScrapeLog, SubscriptionTier, TrackerStatus, User,
 )
 from app.database.session import get_session
+from app.timeutil import fmt, kyiv_date_key, utc_range_for_kyiv_days
 from app.services.scrapers import registry
 
 
@@ -118,28 +119,29 @@ async def overview() -> Overview:
 
 
 async def daily_series(days: int = 30) -> dict[str, list[tuple[str, int]]]:
-    """Три ряди по днях: нові юзери, перевірки цін, надіслані сповіщення. Дні без даних — 0."""
-    since = _naive_utc(_now()) - timedelta(days=days - 1)
-    since = since.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_keys = [(since + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
+    """Три ряди по київських добах: нові юзери, перевірки цін, надіслані сповіщення. Дні без даних — 0."""
+    since, day_keys = utc_range_for_kyiv_days(days)
+
+    def bucket(timestamps) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for ts in timestamps:
+            if ts is None:
+                continue
+            k = kyiv_date_key(ts)
+            out[k] = out.get(k, 0) + 1
+        return out
 
     async with get_session() as s:
-        def rows_to_map(rows):
-            return {str(d)[:10]: int(c) for d, c in rows}
-
-        users = rows_to_map((await s.execute(
-            select(func.date(User.created_at), func.count())
-            .where(User.created_at >= since).group_by(func.date(User.created_at))
-        )).all())
-        checks = rows_to_map((await s.execute(
-            select(func.date(PriceHistory.recorded_at), func.count())
-            .where(PriceHistory.recorded_at >= since).group_by(func.date(PriceHistory.recorded_at))
-        )).all())
-        notifs = rows_to_map((await s.execute(
-            select(func.date(Notification.created_at), func.count())
+        users = bucket((await s.execute(
+            select(User.created_at).where(User.created_at >= since)
+        )).scalars().all())
+        checks = bucket((await s.execute(
+            select(PriceHistory.recorded_at).where(PriceHistory.recorded_at >= since)
+        )).scalars().all())
+        notifs = bucket((await s.execute(
+            select(Notification.created_at)
             .where(Notification.created_at >= since, Notification.status == NotificationStatus.SENT)
-            .group_by(func.date(Notification.created_at))
-        )).all())
+        )).scalars().all())
 
     return {
         "users": [(d, users.get(d, 0)) for d in day_keys],
@@ -186,7 +188,7 @@ async def premium_expiring(days: int = 14) -> list[dict]:
     return [{
         "id": u.id, "name": u.first_name or "—", "username": u.username or "",
         "telegram_id": u.telegram_id,
-        "until": u.premium_until.strftime("%d.%m.%Y") if u.premium_until else "—",
+        "until": fmt(u.premium_until, "%d.%m.%Y", "—"),
         "days_left": max(0, (u.premium_until - n).days) if u.premium_until else 0,
     } for u in rows]
 
@@ -204,7 +206,7 @@ async def problem_trackers(limit: int = 10) -> list[dict]:
         "id": t.id, "user_id": t.user_id,
         "title": (t.title or "Без назви")[:60], "source": t.source,
         "status": t.status, "errors": t.consecutive_errors,
-        "last_checked": t.last_checked_at.strftime("%d.%m %H:%M") if t.last_checked_at else "—",
+        "last_checked": fmt(t.last_checked_at, "%d.%m %H:%M", "—"),
         "user": f"{name or ''} @{uname}" if uname else (name or "—"),
     } for t, name, uname in rows]
 
@@ -261,11 +263,11 @@ async def users_list(search: str = "", tier: str = "all", status: str = "all") -
             "telegram_id": u.telegram_id,
             "lang": u.language_code or "—",
             "tier": "premium" if premium else "free",
-            "until": u.premium_until.strftime("%d.%m.%Y") if premium and u.premium_until else "",
+            "until": (fmt(u.premium_until, "%d.%m.%Y") if premium else ""),
             "blocked": u.is_blocked,
             "trackers": int(cnt),
             "trackers_active": int(active),
-            "created": u.created_at.strftime("%d.%m.%Y") if u.created_at else "—",
+            "created": fmt(u.created_at, "%d.%m.%Y", "—"),
             "created_sort": u.created_at.isoformat() if u.created_at else "",
         })
     return out
@@ -296,11 +298,11 @@ async def user_detail(user_id: str) -> dict | None:
         "lang": u.language_code or "—",
         "tier": "premium" if premium else "free",
         "premium_until": u.premium_until,
-        "premium_until_str": u.premium_until.strftime("%d.%m.%Y") if u.premium_until else "—",
+        "premium_until_str": fmt(u.premium_until, "%d.%m.%Y", "—"),
         "blocked": u.is_blocked,
         "digest_enabled": bool(u.digest_enabled),
         "last_digest_at": u.last_digest_at,
-        "created": u.created_at.strftime("%d.%m.%Y %H:%M") if u.created_at else "—",
+        "created": fmt(u.created_at, "%d.%m.%Y %H:%M", "—"),
         "trackers": [{
             "id": t.id,
             "title": t.title or "Без назви",
@@ -316,11 +318,11 @@ async def user_detail(user_id: str) -> dict | None:
             "available": t.is_available,
             "notify_drop": t.notify_drop,
             "notify_restock": t.notify_restock,
-            "last_checked": t.last_checked_at.strftime("%d.%m %H:%M") if t.last_checked_at else "—",
-            "created": t.created_at.strftime("%d.%m.%Y") if t.created_at else "—",
+            "last_checked": fmt(t.last_checked_at, "%d.%m %H:%M", "—"),
+            "created": fmt(t.created_at, "%d.%m.%Y", "—"),
         } for t in trackers],
         "notifications": [{
-            "when": nf.created_at.strftime("%d.%m %H:%M") if nf.created_at else "—",
+            "when": fmt(nf.created_at, "%d.%m %H:%M", "—"),
             "event": nf.event_type,
             "status": nf.status,
             "old": nf.old_price,
@@ -338,7 +340,7 @@ async def tracker_history(tracker_id: str, limit: int = 300) -> list[tuple[str, 
             .where(PriceHistory.tracker_id == tracker_id)
             .order_by(PriceHistory.recorded_at.asc()).limit(limit)
         )).all()
-    return [(dt.strftime("%Y-%m-%d %H:%M"), float(p)) for dt, p in rows]
+    return [(fmt(dt, "%Y-%m-%d %H:%M"), float(p)) for dt, p in rows]
 
 
 async def set_premium(user_id: str, days: int) -> datetime | None:
@@ -417,9 +419,9 @@ async def trackers_list(status: str = "all", source: str = "all", search: str = 
         "currency": t.currency or "UAH",
         "status": t.status,
         "errors": t.consecutive_errors,
-        "last_checked": t.last_checked_at.strftime("%d.%m %H:%M") if t.last_checked_at else "—",
+        "last_checked": fmt(t.last_checked_at, "%d.%m %H:%M", "—"),
         "user": f"{name or ''} @{uname}".strip() if uname else (name or str(tid)),
-        "created": t.created_at.strftime("%d.%m.%Y") if t.created_at else "—",
+        "created": fmt(t.created_at, "%d.%m.%Y", "—"),
     } for t, name, uname, tid in rows], sources
 
 
@@ -430,9 +432,9 @@ async def admins_list() -> list[dict]:
         rows = (await s.execute(select(Admin).order_by(Admin.created_at.asc()))).scalars().all()
     return [{
         "id": a.id, "username": a.username, "telegram_id": a.telegram_id or "",
-        "active": a.is_active,
-        "last_login": a.last_login_at.strftime("%d.%m.%Y %H:%M") if a.last_login_at else "ніколи",
-        "created": a.created_at.strftime("%d.%m.%Y") if a.created_at else "—",
+        "active": a.is_active, "role": a.role,
+        "last_login": fmt(a.last_login_at, "%d.%m.%Y %H:%M", "ніколи"),
+        "created": fmt(a.created_at, "%d.%m.%Y", "—"),
     } for a in rows]
 
 
@@ -441,10 +443,10 @@ async def admins_count_active() -> int:
         return (await s.execute(select(func.count()).select_from(Admin).where(Admin.is_active == True))).scalar_one()
 
 
-async def create_admin(username: str, password_hash: str, telegram_id: int | None) -> Admin:
+async def create_admin(username: str, password_hash: str, telegram_id: int | None, role: str = "admin") -> Admin:
     async with get_session() as s:
         a = Admin(username=username.strip().lower(), password_hash=password_hash,
-                  telegram_id=telegram_id, is_active=True)
+                  telegram_id=telegram_id, is_active=True, role=role)
         s.add(a)
         await s.flush()
         return a
@@ -463,6 +465,7 @@ async def set_admin_active(admin_id: str, active: bool) -> bool:
         if not a:
             return False
         a.is_active = active
+        a.session_version += 1
     return True
 
 
@@ -472,6 +475,7 @@ async def set_admin_password(admin_id: str, password_hash: str) -> bool:
         if not a:
             return False
         a.password_hash = password_hash
+        a.session_version += 1
     return True
 
 
@@ -481,7 +485,37 @@ async def set_admin_telegram(admin_id: str, telegram_id: int | None) -> bool:
         if not a:
             return False
         a.telegram_id = telegram_id
+        a.session_version += 1
     return True
+
+
+async def set_admin_role(admin_id: str, role: str) -> bool:
+    async with get_session() as s:
+        a = await s.get(Admin, admin_id)
+        if not a:
+            return False
+        a.role = role
+        a.session_version += 1
+    return True
+
+
+async def owners_count_active() -> int:
+    async with get_session() as s:
+        return (await s.execute(select(func.count()).select_from(Admin).where(
+            Admin.is_active == True, Admin.role == "owner"))).scalar_one()  # noqa: E712
+
+
+async def ensure_owner() -> str | None:
+    """Якщо серед активних адмінів немає owner — найстаріший активний стає owner. Повертає його логін."""
+    async with get_session() as s:
+        active = (await s.execute(
+            select(Admin).where(Admin.is_active == True).order_by(Admin.created_at.asc())  # noqa: E712
+        )).scalars().all()
+        if not active or any(a.role == "owner" for a in active):
+            return None
+        active[0].role = "owner"
+        active[0].session_version += 1
+        return active[0].username
 
 
 async def audit_log(limit: int = 50) -> list[dict]:
@@ -490,7 +524,7 @@ async def audit_log(limit: int = 50) -> list[dict]:
             select(AdminAction).order_by(AdminAction.created_at.desc()).limit(limit)
         )).scalars().all()
     return [{
-        "when": a.created_at.strftime("%d.%m.%Y %H:%M") if a.created_at else "—",
+        "when": fmt(a.created_at, "%d.%m.%Y %H:%M", "—"),
         "admin": a.admin_username, "action": a.action,
         "target": a.target or "", "details": a.details or "",
     } for a in rows]
@@ -626,7 +660,7 @@ async def _last_rows(s, ok: bool) -> dict[str, tuple[datetime, str]]:
 
 
 def _fmt_dt(dt: datetime | None) -> str:
-    return dt.strftime("%d.%m %H:%M") if dt else "—"
+    return fmt(dt, "%d.%m %H:%M", "—")
 
 
 async def _platform_rows() -> list[dict]:
@@ -729,14 +763,13 @@ async def platform_detail(domain: str, days: int = 30, recent: int = 20) -> dict
     patterns = (p.domain, *p.aliases) if p else (_norm_host(domain),)
     cond = _domain_cond(ScrapeLog.domain, patterns)
 
-    since = (_naive_utc(_now()) - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    day_keys = [(since + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
+    # Доби — київські (у базі UTC), тому групуємо в Python
+    since, day_keys = utc_range_for_kyiv_days(days)
 
     async with get_session() as s:
         daily = (await s.execute(
-            select(func.date(ScrapeLog.created_at), ScrapeLog.ok, func.count())
+            select(ScrapeLog.created_at, ScrapeLog.ok)
             .where(cond, ScrapeLog.created_at >= since)
-            .group_by(func.date(ScrapeLog.created_at), ScrapeLog.ok)
         )).all()
         last = (await s.execute(
             select(ScrapeLog).where(cond).order_by(ScrapeLog.created_at.desc()).limit(recent)
@@ -744,8 +777,12 @@ async def platform_detail(domain: str, days: int = 30, recent: int = 20) -> dict
 
     ok_map: dict[str, int] = {}
     fail_map: dict[str, int] = {}
-    for d, ok, c in daily:
-        (ok_map if ok else fail_map)[str(d)[:10]] = int(c)
+    for ts, ok in daily:
+        if ts is None:
+            continue
+        k = kyiv_date_key(ts)
+        target = ok_map if ok else fail_map
+        target[k] = target.get(k, 0) + 1
 
     return {
         "domain": p.domain if p else _norm_host(domain),
@@ -811,9 +848,9 @@ def _feedback_row(f: Feedback) -> dict:
         "status": f.status,
         "reply_text": f.reply_text or "",
         "replied_by": f.replied_by or "",
-        "replied_at": f.replied_at.strftime("%d.%m.%Y %H:%M") if f.replied_at else "",
+        "replied_at": fmt(f.replied_at, "%d.%m.%Y %H:%M", ""),
         "forwarded": f.forwarded_message_id is not None,
-        "when": f.created_at.strftime("%d.%m.%Y %H:%M") if f.created_at else "—",
+        "when": fmt(f.created_at, "%d.%m.%Y %H:%M", "—"),
         "created_sort": f.created_at.isoformat() if f.created_at else "",
     }
 
@@ -932,7 +969,7 @@ async def notifications_page(page: int = 1, per_page: int = PAGE_SIZE, *, event:
     for nf, title, currency, source, url, name, uname, tid, uid in rows:
         out.append({
             "id": nf.id,
-            "when": nf.created_at.strftime("%d.%m.%Y %H:%M") if nf.created_at else "—",
+            "when": fmt(nf.created_at, "%d.%m.%Y %H:%M", "—"),
             "event": nf.event_type,
             "event_label": NOTIF_EVENT_LABELS.get(nf.event_type, nf.event_type),
             "status": nf.status,
@@ -982,7 +1019,7 @@ async def checks_page(page: int = 1, per_page: int = PAGE_SIZE, *, source: str =
 
     out = [{
         "id": h.id,
-        "when": h.recorded_at.strftime("%d.%m.%Y %H:%M") if h.recorded_at else "—",
+        "when": fmt(h.recorded_at, "%d.%m.%Y %H:%M", "—"),
         "price": float(h.price),
         "currency": currency or "UAH",
         "available": h.is_available,

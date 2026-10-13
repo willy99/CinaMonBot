@@ -4,7 +4,7 @@
 Що тут доводиться:
  (a) відповідь на фідбек із дашборду йде рівно одній людині — автору фідбеку;
  (b) /reply <id> текст шле рівно одне повідомлення саме цьому id;
- (c) статично: /broadcast — єдине місце в app/, де відправка стоїть у циклі по юзерах;
+ (c) статично: масової розсилки (/broadcast) немає — у циклі по юзерах шле лише дайджест (opt-in);
      усі інші call-sites send_message/copy_message/forward_message/send_telegram_message
      перелічені явно, і новий масовий розсил не пройде непомітно;
  (d) _send_notification шле лише власнику трекера (tracker.user_id → telegram_id);
@@ -209,7 +209,7 @@ async def test_cmd_reply_from_non_admin_sends_nothing(db):
     assert sent == []
 
 
-# ─── (c) Статично: усі місця відправки перелічені, у циклі — лише /broadcast ──
+# ─── (c) Статично: усі місця відправки перелічені, у циклі по юзерах — лише дайджест ──
 
 SEND_NAMES = {"send_message", "copy_message", "forward_message", "send_telegram_message"}
 LOOP_NODES = (ast.For, ast.AsyncFor, ast.While, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
@@ -219,7 +219,7 @@ ALLOWED_SEND_SITES: dict[tuple[str, str], str] = {
     ("app/bot/handlers/main.py", "_notify_admin_new_site"): "адмін (ADMIN_TELEGRAM_ID)",
     ("app/bot/handlers/main.py", "process_feedback"): "адмін (ADMIN_TELEGRAM_ID): шапка + copy_message медіа",
     ("app/bot/handlers/main.py", "cmd_reply"): "один юзер — target_id з команди адміна",
-    ("app/bot/handlers/main.py", "cmd_broadcast"): "УСІ незаблоковані юзери — єдиний масовий розсил",
+    # cmd_broadcast вимкнено (аудит 2026-10-13, N3): масової розсилки всім більше немає
     ("app/bot/handlers/main.py", "cmd_pay_premium"): "адмін (ADMIN_TELEGRAM_ID)",
     ("app/bot/handlers/main.py", "cmd_activate"): "один юзер — target_telegram_id з команди адміна",
     ("app/scheduler/price_checker.py", "_pause_excess_trackers"): "один юзер — власник трекерів (user.telegram_id)",
@@ -234,15 +234,13 @@ ALLOWED_SEND_SITES: dict[tuple[str, str], str] = {
 }
 # Відправка всередині циклу/comprehension дозволена лише тут
 ALLOWED_LOOP_SEND_SITES = {
-    ("app/bot/handlers/main.py", "cmd_broadcast"),            # цикл по юзерах — єдиний БЕЗ opt-in
     ("app/scheduler/price_checker.py", "_check_domain_health"),  # цикл по доменах, адресат завжди admin_id
     # цикл по юзерах з digest_enabled=True: масовий шлях лише за згодою, кожному — його власні дані
     # (гарантії перевіряє tests/test_digest.py: тільки opt-in і незаблоковані, один send на юзера, свій telegram_id)
     ("app/scheduler/digest.py", "send_weekly_digests"),
 }
-# Цикли по юзерах (не по доменах) — лише ці два; у кожному адресат = user.telegram_id з циклу
+# Цикли по юзерах (не по доменах) — лише дайджест (opt-in); адресат = user.telegram_id з циклу
 USER_LOOP_SEND_SITES = [
-    ("app/bot/handlers/main.py", "cmd_broadcast"),
     ("app/scheduler/digest.py", "send_weekly_digests"),
 ]
 
@@ -290,17 +288,17 @@ def test_every_send_call_site_is_explicitly_allowed():
     assert not stale, f"у списку дозволених є неіснуючі call-sites: {sorted(stale)}"
 
 
-def test_broadcast_is_the_only_send_inside_a_loop_over_users():
+def test_only_allowed_sends_inside_loops():
     sites = _all_send_sites()
     in_loop = {key for key, calls in sites.items() if any(flag for flag, _ in calls)}
-    assert in_loop == ALLOWED_LOOP_SEND_SITES, f"відправка в циклі поза /broadcast: {sorted(in_loop - ALLOWED_LOOP_SEND_SITES)}"
+    assert in_loop == ALLOWED_LOOP_SEND_SITES, f"відправка в циклі поза дозволеними: {sorted(in_loop - ALLOWED_LOOP_SEND_SITES)}"
 
     # _check_domain_health: адресат — літерально admin_id, не юзер
     for _, call in sites[("app/scheduler/price_checker.py", "_check_domain_health")]:
         chat = _kw(call, "chat_id")
         assert isinstance(chat, ast.Name) and chat.id == "admin_id"
 
-    # Цикли по юзерах: /broadcast (усім) і дайджест (лише opt-in). Інших немає.
+    # Цикл по юзерах — лише дайджест (opt-in). /broadcast вимкнено (N3). Інших немає.
     user_loops = sorted(key for key in in_loop if key != ("app/scheduler/price_checker.py", "_check_domain_health"))
     assert user_loops == sorted(USER_LOOP_SEND_SITES)
 

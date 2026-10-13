@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import mimetypes
 from pathlib import PurePosixPath
+from urllib.parse import quote
 
 import httpx
 import structlog
@@ -17,6 +18,16 @@ from app.config import settings
 logger = structlog.get_logger(__name__)
 
 MAX_FILE_BYTES = 20 * 1024 * 1024  # ліміт Bot API для getFile — 20 МБ
+
+# Лише растрові картинки показуємо прямо в браузері. SVG (і будь-що інше) — тільки завантаженням:
+# SVG може містити <script>, який виконався б на origin адмінки з сесією адміна.
+INLINE_TYPES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp"})
+# Файли від користувачів: заборонити sniffing, скрипти, фрейми й будь-які підзавантаження
+MEDIA_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox",
+    "Cache-Control": "private, max-age=3600",
+}
 
 
 class TelegramFileError(Exception):
@@ -60,8 +71,29 @@ def guess_content_type(file_path: str, fallback: str = "application/octet-stream
     return ctype
 
 
+def media_headers(ctype: str, filename: str) -> dict[str, str]:
+    """Заголовки відповіді /media: inline лише для безпечних картинок, решта — attachment."""
+    filename = filename.replace("\r", "").replace("\n", "") or "file"
+    if ctype in INLINE_TYPES:
+        disposition = "inline"
+    else:
+        ascii_name = filename.encode("ascii", "replace").decode("ascii").replace('"', "")
+        disposition = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
+    return {"Content-Disposition": disposition, **MEDIA_SECURITY_HEADERS}
+
+
 async def download_file(file_path: str) -> tuple[bytes, str]:
     """Повертає (байти, content-type). Кидає TelegramFileError при 404 / перевищенні ліміту."""
+    try:
+        data = await _download(file_path)
+    except httpx.HTTPError as e:
+        # текст винятку містить URL з токеном — назовні лише тип помилки
+        logger.warning("telegram_download_error", error=type(e).__name__)
+        raise TelegramFileError("file not found") from None
+    return data, guess_content_type(file_path)
+
+
+async def _download(file_path: str) -> bytes:
     async with httpx.AsyncClient(timeout=60) as client:
         async with client.stream("GET", f"{_file_base()}/{file_path}") as r:
             if r.status_code == 404:
@@ -77,6 +109,4 @@ async def download_file(file_path: str) -> tuple[bytes, str]:
                 if total > MAX_FILE_BYTES:
                     raise TelegramFileError("file too large")
                 chunks.append(chunk)
-    data = b"".join(chunks)
-    ctype = guess_content_type(file_path)
-    return data, ctype
+    return b"".join(chunks)

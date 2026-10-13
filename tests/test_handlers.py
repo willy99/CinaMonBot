@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.bot.handlers import main as h
+from app.timeutil import fmt
 from app.config import settings
 from app.database.models import (
     Notification, NotificationStatus, PriceEventType, PriceHistory, PriceTracker, SubscriptionTier,
@@ -934,7 +935,7 @@ async def test_premium_active_for_premium_user(db):
     await seed_user(1, lang="en", tier="premium", premium_until=until)
     with capture_bot() as sent:
         await h.cmd_premium(make_message(1, "/premium", "en"))
-    assert "Your Premium is active" in sent[0].text and until.strftime("%d.%m.%Y") in sent[0].text
+    assert "Your Premium is active" in sent[0].text and fmt(until, "%d.%m.%Y") in sent[0].text
     assert sent[0].buttons == ["🔄 Renew Premium"] and sent[0].callbacks == ["pay_premium"]
 
 
@@ -1026,7 +1027,7 @@ async def test_activate_success(db, args, days, lang, fragment):
     assert user.tier == SubscriptionTier.PREMIUM and user.is_premium is True
     expected_until = datetime.utcnow() + timedelta(days=days)
     assert abs(user.premium_until - expected_until) < timedelta(minutes=1)
-    until_str = user.premium_until.strftime("%d.%m.%Y")
+    until_str = fmt(user.premium_until, "%d.%m.%Y")
 
     assert "Premium активовано" in sent[0].text and "Олена" in sent[0].text and "(ID: 5)" in sent[0].text
     assert f"(+{days} днів)" in sent[0].text and until_str in sent[0].text
@@ -1084,66 +1085,10 @@ async def test_activate_user_notify_failure_reported_to_admin(db):
     assert "Не вдалось повідомити юзера" in sent[1].text and "bot was blocked" in sent[1].text
 
 
-# ─── /broadcast (адмін) ──────────────────────────────────────────
+# ─── /broadcast вимкнено (N3) ────────────────────────────────────
 
-async def test_broadcast_ignored_for_non_admin(db):
-    await seed_user(2)
-    bot = make_bot()
-    with capture_bot() as sent:
-        await h.cmd_broadcast(make_message(1, "/broadcast hi", bot=bot))
-    assert sent == [] and bot.send_message.await_count == 0
-
-
-@pytest.mark.parametrize("text", ["/broadcast", "/broadcast   "])
-async def test_broadcast_usage_without_text(db, text):
-    bot = make_bot()
-    with capture_bot() as sent:
-        await h.cmd_broadcast(make_message(ADMIN, text, bot=bot))
-    assert len(sent) == 1 and "Використання" in sent[0].text and bot.send_message.await_count == 0
-
-
-async def test_broadcast_sends_to_non_blocked_users(db):
-    await seed_user(1, lang="uk")
-    await seed_user(2, lang="en")
-    await seed_user(3, blocked=True)
-    bot = make_bot()
-    with capture_bot() as sent:
-        await h.cmd_broadcast(make_message(ADMIN, "/broadcast <b>Привіт</b> усім", bot=bot))
-    assert "Надсилаю 2 юзерам" in sent[0].text
-    assert "Надіслано: 2" in sent[-1].text and "Не вдалось: 0" in sent[-1].text
-    chats = sorted(c.kwargs["chat_id"] for c in bot.send_message.await_args_list)
-    assert chats == [1, 2]
-    for c in bot.send_message.await_args_list:
-        assert c.kwargs["text"] == "<b>Привіт</b> усім" and c.kwargs["parse_mode"] == "HTML"
-
-
-async def test_broadcast_marks_blocked_and_counts_failures(db):
-    await seed_user(1)
-    await seed_user(2)
-    await seed_user(3)
-    bot = make_bot()
-
-    async def send(chat_id, text, **kw):
-        if chat_id == 2:
-            raise Exception("Telegram server says - Forbidden: bot was blocked by the user")
-        if chat_id == 3:
-            raise Exception("Bad Request: chat not found")
-        return None
-
-    bot.send_message = AsyncMock(side_effect=send)
-    with capture_bot() as sent:
-        await h.cmd_broadcast(make_message(ADMIN, "/broadcast hi", bot=bot))
-    assert "Надіслано: 1" in sent[-1].text and "Не вдалось: 2" in sent[-1].text
-    assert (await load_user(2)).is_blocked is True
-    assert (await load_user(3)).is_blocked is False           # інша помилка — не блок
-    assert (await load_user(1)).is_blocked is False
-
-
-async def test_broadcast_with_no_users(db):
-    bot = make_bot()
-    with capture_bot() as sent:
-        await h.cmd_broadcast(make_message(ADMIN, "/broadcast hi", bot=bot))
-    assert "Надсилаю 0 юзерам" in sent[0].text and "Надіслано: 0" in sent[-1].text
+def test_broadcast_command_is_disabled():
+    assert not hasattr(h, "cmd_broadcast")
 
 
 # ─── /stats (адмін) ──────────────────────────────────────────────
@@ -1198,3 +1143,29 @@ async def test_stats_health_bar_red(db):
     with capture_bot() as sent:
         await h.cmd_stats(make_message(ADMIN, "/stats"))
     assert "🔴" in sent[0].text
+
+
+async def test_pay_premium_without_card_number_is_graceful(db, monkeypatch):
+    """Без реквізитів у .env юзер бачить «оплата недоступна», а не порожню інструкцію."""
+    monkeypatch.setattr(h.settings, "CARD_NUMBER", "")
+    await seed_user(1, lang="uk")
+    with capture_bot() as sent:
+        await h.cmd_pay_premium(make_callback(1, "pay_premium", "uk"))
+    texts = [x.text for x in sent if x.kind == "answer"]
+    assert texts and "недоступна" in texts[0] and "PREM-" not in texts[0]
+
+
+async def test_user_who_unblocked_bot_gets_alerts_again(db):
+    """bot_blocked ставиться автоматично («bot was blocked») і знімається, щойно юзер знову пише боту;
+    is_blocked — лише адмінське блокування, його повідомлення не знімає."""
+    from app.bot.handlers.main import get_or_create_user
+    from app.database.models import User
+    from app.database.session import get_session
+    from tests.helpers import tg_user
+
+    u = await get_or_create_user(tg_user(4242))
+    async with get_session() as s:
+        db_u = await s.get(User, u.id)
+        db_u.bot_blocked = True
+    again = await get_or_create_user(tg_user(4242))
+    assert again.bot_blocked is False and again.is_blocked is False

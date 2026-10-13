@@ -1,0 +1,42 @@
+# Прямі залежності ЦінаБот. Lock-файл з хешами — requirements.txt, його генерує ./run.sh lock:
+#   uv pip compile requirements.in --generate-hashes --python-version 3.11 -o requirements.txt
+# Встановлення: venv/bin/pip install --require-hashes -r requirements.txt
+# ─── Bot ─────────────────────────────────────────────────────────
+aiogram==3.31.0           # 3.7.0 був несумісний з pydantic/aiohttp, які тягне nicegui 3.18 (pip check)
+
+# ─── Database ────────────────────────────────────────────────────
+sqlalchemy[asyncio]==2.0.30
+aiosqlite==0.20.0          # async SQLite driver
+asyncpg==0.29.0            # async PostgreSQL driver (якщо використовуєш Postgres)
+alembic==1.13.1            # міграції БД
+
+# ─── Scheduler (заміна Celery) ───────────────────────────────────
+apscheduler==3.10.4        # простий планувальник задач у тому ж процесі
+
+# ─── HTTP / Scraping ─────────────────────────────────────────────
+httpx==0.27.0
+beautifulsoup4==4.12.3
+lxml==6.1.3                # 5.2.2 мав PYSEC-2026-87
+
+# ─── Config ──────────────────────────────────────────────────────
+pydantic-settings==2.2.1
+
+# ─── Logging ─────────────────────────────────────────────────────
+structlog==24.1.0
+
+# ─── Admin dashboard (python admin.py) ──────────────────────────
+nicegui==3.18.0
+fastapi==0.143.0           # імпортується напряму в admin.py (раніше приходив лише з nicegui)
+psutil==7.2.2              # системна статистика в адмінці (/system)
+
+# ─── JS rendering (optional) ────────────────────────────────────
+# Headless Chromium для магазинів за Cloudflare / з ціною через JS (app/services/scrapers/render.py).
+# Після pip install ще: python -m playwright install chromium. Без цього бот працює через httpx.
+playwright==1.63.0
+
+# ─── Dev ─────────────────────────────────────────────────────────
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+respx==0.23.1                # моки httpx у тестах скраперів
+pip-audit==2.9.0           # ./run.sh audit — відомі CVE в залежностях

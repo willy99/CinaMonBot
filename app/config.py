@@ -12,6 +12,8 @@ class Settings(BaseSettings):
 
     # ─── Telegram ────────────────────────────────────────────────
     BOT_TOKEN: SecretStr
+    # Ліміт на користувача: будь-які апдейти (повідомлення, кнопки) за хвилину
+    USER_REQUESTS_PER_MINUTE: int = 20
 
     # ─── Database ────────────────────────────────────────────────
     # Варіант 1: SQLite (просто вкажи шлях до файлу)
@@ -56,14 +58,16 @@ class Settings(BaseSettings):
     FREE_TIER_MAX_ITEMS: int = 5
     PREMIUM_PRICE_UAH: int = 60
 
-    CARD_NUMBER: str = "5169 3600 3222 2238"  # номер картки для оплати Premium
-    CARD_IBAN: str = "UA43 305299 0262 0164 0100 4937123"
+    # Реквізити для оплати Premium — лише з .env (у репозиторії їх бути не повинно)
+    CARD_NUMBER: str = ""
+    CARD_IBAN: str = ""
 
 
 
     # ─── AI Auto-Healing ────────────────────────────────────
     ANTHROPIC_API_KEY: str = ""
-    ADMIN_TELEGRAM_ID: int = 431742835
+    # Telegram ID власника: адмін-команди, 2FA-коди, алерти. Лише з .env; 0 = адмін-функції вимкнені.
+    ADMIN_TELEGRAM_ID: int = 0
 
     # ─── Admin dashboard (python admin.py) ───────────────────────
     ADMIN_PORT: int = 8088
@@ -79,6 +83,13 @@ class Settings(BaseSettings):
     # ─── Payments (необов'язково на старті) ──────────────────────
     LIQPAY_PUBLIC_KEY: str = ""
     LIQPAY_PRIVATE_KEY: SecretStr = SecretStr("")
+
+    # ─── Експлуатація (python ops.py backup | healthcheck) ───────
+    BACKUP_DIR: str = "backups"
+    BACKUP_KEEP_DAYS: int = 14
+    BACKUP_REMOTE: str = ""                  # rsync-ціль поза машиною, напр. user@nas:/backups/priceguard
+    HEALTHCHECK_PING_URL: str = ""           # healthchecks.io / Uptime Kuma push URL; порожньо — лише алерт адміну
+    API_HEALTH_URL: str = ""                 # API немає — лишаємо порожнім
 
     # ─── Environment ─────────────────────────────────────────────
     ENVIRONMENT: str = "development"

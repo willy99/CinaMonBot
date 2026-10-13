@@ -42,6 +42,7 @@ from urllib.parse import urlparse
 
 import structlog
 
+from app.services.scrapers import netguard
 from app.config import settings
 
 logger = structlog.get_logger(__name__)
@@ -269,7 +270,8 @@ class BrowserRenderer:
                 if self._pw is None:
                     self._pw = await pw_api.async_playwright().start()
                 channel = setting("RENDER_BROWSER_CHANNEL") or ""
-                kwargs: dict[str, Any] = {"headless": True, "args": LAUNCH_ARGS}
+                # Пісочниця Chromium: у Playwright вона за замовчуванням ВИМКНЕНА, а ми виконуємо JS чужих сайтів
+                kwargs: dict[str, Any] = {"headless": True, "args": LAUNCH_ARGS, "chromium_sandbox": True}
                 if channel:
                     kwargs["channel"] = channel
                 try:
@@ -329,6 +331,8 @@ class BrowserRenderer:
         try:
             if route.request.resource_type in BLOCKED_RESOURCE_TYPES:
                 await route.abort()
+            elif not await netguard.host_is_public(urlparse(route.request.url).hostname or ""):
+                await route.abort("blockedbyclient")      # SSRF: сторінка не дістанеться внутрішніх адрес
             else:
                 await route.continue_()
         except Exception:  # noqa: BLE001 — сторінку вже закрили

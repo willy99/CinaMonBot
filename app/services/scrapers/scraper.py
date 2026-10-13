@@ -38,6 +38,7 @@ import structlog
 from bs4 import BeautifulSoup, Tag, UnicodeDammit
 
 from app.config import settings
+from app.services.scrapers import netguard
 from app.services.scrapers import registry
 from app.services.scrapers.extract import extract_product, parse_price_text
 from app.services.scrapers.render import RenderError, RenderUnavailable, get_renderer, render_fallback_enabled
@@ -369,6 +370,7 @@ def get_http_client() -> httpx.AsyncClient:
             timeout=settings.REQUEST_TIMEOUT_SECONDS,
             follow_redirects=True,
             headers=BROWSER_HEADERS,
+            event_hooks={"request": [netguard.httpx_request_hook]},   # SSRF: кожен запит і редирект
         )
     return _http_client
 
@@ -417,6 +419,11 @@ class AbstractScraper(ABC):
         canonical = self.canonicalize_url(url)
         started = time.monotonic()
         try:
+            await netguard.check_url(canonical)
+        except netguard.ForbiddenTarget:
+            logger.warning("forbidden_target", domain=self.domain)
+            return ScrapeError(url=canonical, reason="forbidden_target")
+        try:
             result, healed = await self._scrape_with_retries(canonical)
         except Exception as e:  # noqa: BLE001 — страховка: планувальник не має падати через парсер
             logger.error("scrape_crashed", domain=self.domain, error=str(e))
@@ -445,7 +452,7 @@ class AbstractScraper(ABC):
         """
         (результат, чи допоміг healer).
         Домени з render_js → браузер (при недоступному Playwright — httpx як завжди).
-        Решта → httpx; якщо він дав blocked/parse_failed і ввімкнено RENDER_FALLBACK —
+        Решта → httpx; якщо він дав blocked/parse_failed, ввімкнено RENDER_FALLBACK і домен є в реєстрі —
         одна спроба через браузер (успіх логуємо як render_fallback_success, щоб домен можна було позначити).
         """
         flagged = self._render_flagged()
@@ -456,7 +463,10 @@ class AbstractScraper(ABC):
             logger.info("render_unavailable_fallback_http", domain=self.domain)
 
         result, healed, render_eligible = await self._scrape_http(canonical)
-        if not flagged and render_eligible and render_fallback_enabled() and self._worth_rendering(result):
+        # Браузер (JS чужої сторінки на нашій машині) — лише для доменів із реєстру: сторінку з довільного
+        # посилання користувача в Chromium не відкриваємо (аудит 2026-10-13, N4)
+        known = registry.platform_for(self.domain) is not None
+        if not flagged and known and render_eligible and render_fallback_enabled() and self._worth_rendering(result):
             http_reason = result.reason if isinstance(result, ScrapeError) else "no_price"
             rendered, r_healed = await self._scrape_rendered(canonical)
             if isinstance(rendered, ProductData) and (rendered.price is not None or isinstance(result, ScrapeError)):
@@ -807,7 +817,7 @@ class GenericScraper(AbstractScraper):
         except ValueError:
             return False
         host = (parsed.hostname or "").lower()
-        return parsed.scheme in ("http", "https") and bool(host) and ("." in host or host == "localhost")
+        return parsed.scheme in ("http", "https") and "." in host     # localhost / внутрішні — netguard
 
     def canonicalize_url(self, url: str) -> str:
         parsed = urlparse(url)

@@ -89,9 +89,11 @@ def fmt_money(amount: Decimal | float | int | None, currency: str | None, lang: 
 
 
 def fmt_date(dt, lang: str) -> str:
+    """Дата для юзера за київським часом (у базі зберігається UTC)."""
     if dt is None:
         return "—"
-    return dt.strftime("%d.%m.%Y")
+    from app.timeutil import to_kyiv
+    return to_kyiv(dt).strftime("%d.%m.%Y")
 
 
 def fmt_percent(pct: Decimal | float | int | None, lang: str = DEFAULT_LANG) -> str:
@@ -216,6 +218,8 @@ _T: dict[str, dict[str, str]] = {
         "checking": "⏳ Перевіряю товар...",
         "err_blocked": "⛔ Цей сайт блокує автоматичні запити, поки що не підтримується.",
         "err_not_found": "❌ Сторінка не знайдена (404). Перевір посилання.",
+        "err_forbidden_target": "❌ Це посилання веде на внутрішню адресу — такі не відстежуємо. Надішли посилання на сторінку магазину.",
+        "rate_limited": "⏳ Забагато запитів. Спробуй ще раз за {seconds} с.",
         "err_parse_failed": (
             "🤷 Не знайшов ціну на цій сторінці. Перевір, що це сторінка конкретного товару, "
             "а не каталог чи пошук.\n\n"
@@ -275,6 +279,7 @@ _T: dict[str, dict[str, str]] = {
             "<i>Оплата: Visa / Mastercard / Monobank</i>"
         ),
         "already_premium_alert": "У тебе вже є Premium! ⭐",
+        "pay_unavailable": "💳 Оплата тимчасово недоступна. Напиши нам через /feedback — активуємо вручну.",
         "pay_instructions": (
             "💳 <b>Оплата Premium — {price} грн</b>\n\n"
             "Переказ на картку Privat:\n\n"
@@ -527,6 +532,8 @@ _T: dict[str, dict[str, str]] = {
         "checking": "⏳ Checking the product...",
         "err_blocked": "⛔ This site blocks automated requests — not supported yet.",
         "err_not_found": "❌ Page not found (404). Check the link.",
+        "err_forbidden_target": "❌ This link points to an internal address — we don't track those. Send a shop page link.",
+        "rate_limited": "⏳ Too many requests. Try again in {seconds} s.",
         "err_parse_failed": (
             "🤷 I couldn't find a price on this page. Make sure it's a page of a specific product, "
             "not a catalogue or search results.\n\n"
@@ -583,6 +590,7 @@ _T: dict[str, dict[str, str]] = {
             "<i>Payment: Visa / Mastercard / Monobank</i>"
         ),
         "already_premium_alert": "You already have Premium! ⭐",
+        "pay_unavailable": "💳 Payment is temporarily unavailable. Message us via /feedback and we'll activate it manually.",
         "pay_instructions": (
             "💳 <b>Premium payment — {price} UAH</b>\n\n"
             "Transfer to a PrivatBank card (Ukraine):\n\n"

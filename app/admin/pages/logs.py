@@ -8,13 +8,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 from typing import Awaitable, Callable
 
 from nicegui import ui
 
 from app.admin import queries as q
-from app.admin.theme import MUTED, card, layout, money
+from app.admin.i18n import at, event_label
+from app.admin.theme import card, layout, money
 
 PAGE_SIZE = q.PAGE_SIZE
 
@@ -56,8 +58,8 @@ class Pager:
     def render(self, shown: int) -> None:
         start = (self.page - 1) * PAGE_SIZE + 1 if self.total else 0
         end = start + shown - 1 if shown else 0
-        self.info.text = f"Показано {start}–{end} з {self.total}"
-        self.label.text = f"стор. {self.page} з {self.pages}"
+        self.info.text = at("pager_shown", start=start, end=end, total=self.total)
+        self.label.text = at("pager_page", page=self.page, pages=self.pages)
         for b, disabled in ((self.first, self.page <= 1), (self.prev, self.page <= 1),
                             (self.next, self.page >= self.pages), (self.last, self.page >= self.pages)):
             if disabled:
@@ -66,15 +68,28 @@ class Pager:
                 b.props(remove="disable")
 
 
+def _no_data_slot(text: str) -> str:
+    return f'<div class="full-width row flex-center q-pa-md pg-muted">{text}</div>'
+
+
 # ─── /notifications ──────────────────────────────────────────────
 
+# Підписи у слотах — не літерали: підставляються з at() при рендері (див. _notif_status_slot)
 NOTIF_STATUS_SLOT = r'''
 <q-td :props="props">
   <span class="pg-badge" :class="props.value === 'sent' ? 'good' : 'critical'">
-    <span class="dot"></span>{{ props.value === 'sent' ? 'Надіслано' : 'Не вдалось' }}
+    <span class="dot"></span>{{ props.value === 'sent' ? __SENT__ : __FAILED__ }}
   </span>
-  <div v-if="props.row.error" style="color:#898781; font-size:11px; max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">{{ props.row.error }}</div>
+  <div v-if="props.row.error" class="pg-sub" style="max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">{{ props.row.error }}</div>
 </q-td>'''
+
+
+def _notif_status_slot() -> str:
+    return NOTIF_STATUS_SLOT.replace("__SENT__", json.dumps(at("notif_sent"), ensure_ascii=False)) \
+        .replace("__FAILED__", json.dumps(at("notif_failed"), ensure_ascii=False))
+
+
+# Підпис події (props.row.event_label) сторінка перекладає сама в load(), бо queries дає український
 
 NOTIF_EVENT_SLOT = r'''
 <q-td :props="props">
@@ -84,7 +99,7 @@ NOTIF_EVENT_SLOT = r'''
 
 @ui.page("/notifications")
 async def notifications_page() -> None:
-    with layout("Сповіщення", "/"):
+    with layout(at("notifs_title"), "/"):
         params = _query_params()
         state = {
             "event": params.get("event", "all"),
@@ -93,24 +108,25 @@ async def notifications_page() -> None:
         }
 
         with ui.row().classes("w-full items-center gap-3 no-wrap"):
-            search = ui.input(placeholder="Пошук: товар, ім'я, username або Telegram ID", value=state["search"]) \
+            search = ui.input(placeholder=at("notifs_search"), value=state["search"]) \
                 .props("outlined dense clearable debounce=300").classes("flex-grow").style("max-width: 420px")
             with search.add_slot("prepend"):
                 ui.icon("search")
-            event = ui.select({"all": "Усі події", **q.NOTIF_EVENT_LABELS}, value=state["event"]) \
-                .props("outlined dense").style("min-width: 190px")
-            status = ui.toggle({"all": "Усі", "sent": "Надіслані", "failed": "Невдалі"}, value=state["status"]) \
+            event = ui.select({"all": at("notifs_all_events"), **{c: event_label(c) for c in q.NOTIF_EVENT_LABELS}},
+                              value=state["event"]).props("outlined dense").style("min-width: 190px")
+            status = ui.toggle({"all": at("notifs_status_all"), "sent": at("notifs_status_sent"),
+                                "failed": at("notifs_status_failed")}, value=state["status"]) \
                 .props("no-caps unelevated dense toggle-color=primary")
             ui.space()
-            ui.label(f"по {PAGE_SIZE} від найновіших").classes("pg-muted").style("font-size:13px; white-space:nowrap")
+            ui.label(at("per_page_newest", n=PAGE_SIZE)).classes("pg-muted").style("font-size:13px; white-space:nowrap")
 
         columns = [
-            {"name": "when", "label": "Коли", "field": "when", "align": "left", "style": "white-space:nowrap"},
-            {"name": "event", "label": "Подія", "field": "event", "align": "left"},
-            {"name": "title", "label": "Товар", "field": "title", "align": "left"},
-            {"name": "change", "label": "Ціна", "field": "change", "align": "right", "style": "white-space:nowrap"},
-            {"name": "user", "label": "Користувач", "field": "user", "align": "left"},
-            {"name": "status", "label": "Статус", "field": "status", "align": "left"},
+            {"name": "when", "label": at("col_when"), "field": "when", "align": "left", "style": "white-space:nowrap"},
+            {"name": "event", "label": at("col_event"), "field": "event", "align": "left"},
+            {"name": "title", "label": at("col_product"), "field": "title", "align": "left"},
+            {"name": "change", "label": at("col_price"), "field": "change", "align": "right", "style": "white-space:nowrap"},
+            {"name": "user", "label": at("col_user"), "field": "user", "align": "left"},
+            {"name": "status", "label": at("col_status"), "field": "status", "align": "left"},
         ]
         with card():
             table = ui.table(columns=columns, rows=[], row_key="id").props("flat dense hide-pagination") \
@@ -118,12 +134,12 @@ async def notifications_page() -> None:
             table.add_slot("body-cell-event", NOTIF_EVENT_SLOT)
             table.add_slot("body-cell-title", r'''
                 <q-td :props="props"><a :href="props.row.url" target="_blank" class="pg-link pg-ellipsis" style="max-width:300px">{{ props.value }}</a>
-                <div style="color:#898781; font-size:11px">{{ props.row.source }}</div></q-td>''')
+                <div class="pg-sub">{{ props.row.source }}</div></q-td>''')
             table.add_slot("body-cell-user", r'''
                 <q-td :props="props"><a :href="'/users/' + props.row.user_id" class="pg-link">{{ props.value }}</a>
-                <span v-if="props.row.username" style="color:#898781"> @{{ props.row.username }}</span></q-td>''')
-            table.add_slot("body-cell-status", NOTIF_STATUS_SLOT)
-            table.add_slot("no-data", '<div class="full-width row flex-center q-pa-md" style="color:#898781">Сповіщень немає</div>')
+                <span v-if="props.row.username" class="pg-muted"> @{{ props.row.username }}</span></q-td>''')
+            table.add_slot("body-cell-status", _notif_status_slot())
+            table.add_slot("no-data", _no_data_slot(at("notifs_empty")))
 
             async def load(page: int) -> None:
                 rows, total = await q.notifications_page(
@@ -132,6 +148,7 @@ async def notifications_page() -> None:
                 for r in rows:
                     new = money(r["new"], r["currency"])
                     r["change"] = f"{money(r['old'], r['currency'])} → {new}" if r["old"] is not None else new
+                    r["event_label"] = event_label(r["event"])
                 table.rows = rows
                 table.update()
                 pager.total = total
@@ -164,38 +181,40 @@ async def notifications_page() -> None:
 
 @ui.page("/checks")
 async def checks_page() -> None:
-    with layout("Перевірки цін", "/"):
+    with layout(at("checks_title"), "/"):
         params = _query_params()
         state = {"source": params.get("source", "all"), "search": params.get("q", "")}
         _, _, sources = await q.checks_page(1, 1)
 
         with ui.row().classes("w-full items-center gap-3 no-wrap"):
-            search = ui.input(placeholder="Пошук: товар, ім'я або username", value=state["search"]) \
+            search = ui.input(placeholder=at("checks_search"), value=state["search"]) \
                 .props("outlined dense clearable debounce=300").classes("flex-grow").style("max-width: 380px")
             with search.add_slot("prepend"):
                 ui.icon("search")
-            source = ui.select({"all": "Усі сайти", **{s: s for s in sources}}, value=state["source"]) \
+            source = ui.select({"all": at("checks_all_sites"), **{s: s for s in sources}}, value=state["source"]) \
                 .props("outlined dense").style("min-width: 190px")
             ui.space()
-            ui.label(f"по {PAGE_SIZE} від найновіших").classes("pg-muted").style("font-size:13px; white-space:nowrap")
+            ui.label(at("per_page_newest", n=PAGE_SIZE)).classes("pg-muted").style("font-size:13px; white-space:nowrap")
 
         columns = [
-            {"name": "when", "label": "Коли", "field": "when", "align": "left", "style": "white-space:nowrap"},
-            {"name": "title", "label": "Товар", "field": "title", "align": "left"},
-            {"name": "price_str", "label": "Ціна", "field": "price_str", "align": "right", "style": "white-space:nowrap"},
-            {"name": "available", "label": "Наявність", "field": "available", "align": "left"},
-            {"name": "user", "label": "Користувач", "field": "user", "align": "left"},
+            {"name": "when", "label": at("col_when"), "field": "when", "align": "left", "style": "white-space:nowrap"},
+            {"name": "title", "label": at("col_product"), "field": "title", "align": "left"},
+            {"name": "price_str", "label": at("col_price"), "field": "price_str", "align": "right", "style": "white-space:nowrap"},
+            {"name": "available", "label": at("col_availability"), "field": "available", "align": "left"},
+            {"name": "user", "label": at("col_user"), "field": "user", "align": "left"},
         ]
         with card():
             table = ui.table(columns=columns, rows=[], row_key="id").props("flat dense hide-pagination").classes("w-full")
             table.add_slot("body-cell-title", r'''
                 <q-td :props="props"><a :href="props.row.url" target="_blank" class="pg-link pg-ellipsis">{{ props.value }}</a>
-                <div style="color:#898781; font-size:11px">{{ props.row.source }}</div></q-td>''')
+                <div class="pg-sub">{{ props.row.source }}</div></q-td>''')
             table.add_slot("body-cell-available", r'''
-                <q-td :props="props"><span class="pg-badge" :class="props.value ? 'good' : 'serious'"><span class="dot"></span>{{ props.value ? 'В наявності' : 'Немає' }}</span></q-td>''')
+                <q-td :props="props"><span class="pg-badge" :class="props.value ? 'good' : 'serious'"><span class="dot"></span>{{ props.value ? __IN_STOCK__ : __OUT__ }}</span></q-td>'''
+                .replace("__IN_STOCK__", json.dumps(at("in_stock"), ensure_ascii=False))
+                .replace("__OUT__", json.dumps(at("status_out_of_stock"), ensure_ascii=False)))
             table.add_slot("body-cell-user", r'''
                 <q-td :props="props"><a :href="'/users/' + props.row.user_id" class="pg-link">{{ props.value }}</a></q-td>''')
-            table.add_slot("no-data", '<div class="full-width row flex-center q-pa-md" style="color:#898781">Перевірок ще не було</div>')
+            table.add_slot("no-data", _no_data_slot(at("checks_empty")))
 
             async def load(page: int) -> None:
                 rows, total, _ = await q.checks_page(page, source=state["source"], search=state["search"])

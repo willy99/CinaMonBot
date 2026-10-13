@@ -29,7 +29,6 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
-import asyncio
 from html import escape as html_escape
 import structlog
 
@@ -41,6 +40,7 @@ from app.database.session import get_session
 from app.database.models import Feedback, PriceTracker, TrackerStatus, User
 from app.i18n import LANGUAGES, country_label, fmt_date, fmt_money, fmt_percent, t
 from app.services.limits import extend_premium, sync_free_limit
+from app.timeutil import now_kyiv
 from app.services.scrapers.registry import PLATFORMS, platform_for, verified_platforms
 from app.services.scrapers.scraper import ScraperFactory, ScrapeError
 
@@ -94,6 +94,8 @@ async def get_or_create_user(from_user) -> User:
                 user = (await session.execute(
                     select(User).where(User.telegram_id == from_user.id)
                 )).scalar_one()
+        if user.bot_blocked:
+            user.bot_blocked = False         # написав боту — отже, розблокував; сповіщення знову йдуть
         return user
 
 
@@ -251,6 +253,7 @@ _SCRAPE_ERROR_KEYS = {
     "blocked": "err_blocked",
     "not_found": "err_not_found",
     "parse_failed": "err_parse_failed",
+    "forbidden_target": "err_forbidden_target",
 }
 
 # Домени, про які адміна вже повідомили як про новий сайт (скидається з рестартом процесу)
@@ -363,7 +366,7 @@ async def process_url(message: Message, state: FSMContext) -> None:
         currency=currency,
     )
     await wait.edit_text(
-        t(lang, "ask_target", title=result.title, price=price_text, avail=avail, currency=currency),
+        t(lang, "ask_target", title=html_escape(result.title or "", quote=False), price=price_text, avail=avail, currency=currency),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=t(lang, "btn_skip"), callback_data="skip_target")]
         ]),
@@ -517,7 +520,7 @@ async def _save_tracker(from_user, state, msg, target_price, *, target_percent=N
         target_text = ""
 
     await msg.answer(
-        t(lang, "added", title=(data.get("title") or "")[:60], target=target_text, slots=slot_text),
+        t(lang, "added", title=html_escape((data.get("title") or "")[:60], quote=False), target=target_text, slots=slot_text),
         parse_mode="HTML",
     )
 
@@ -584,7 +587,7 @@ async def _show_list(user: User, msg: Message) -> None:
         target = list_target_text(tr, lang)
 
         # Формуємо рядок товару
-        title = (tr.title or t(lang, "untitled"))[:40]
+        title = html_escape((tr.title or t(lang, "untitled"))[:40], quote=False)   # назва — з сайту магазину
         lines.append(f"{i}. {status_icon} <b>{title}</b>")
         lines.append(f"   💰 {price}{target} {status_text}\n")
 
@@ -679,7 +682,7 @@ async def confirm_delete(callback: CallbackQuery) -> None:
         if tracker.user_id != user.id:
             await callback.answer(t(lang, "no_access"))
             return
-        title = (tracker.title or t(lang, "item"))[:50]
+        title = html_escape((tracker.title or t(lang, "item"))[:50], quote=False)
 
     await callback.message.edit_text(
         t(lang, "delete_confirm", title=title),
@@ -708,7 +711,7 @@ async def do_delete(callback: CallbackQuery) -> None:
         if not tracker or tracker.user_id != user.id:
             await callback.answer(t(lang, "error"))
             return
-        title = (tracker.title or t(lang, "item"))[:50]
+        title = html_escape((tracker.title or t(lang, "item"))[:50], quote=False)
         await session.delete(tracker)
 
     # Звільнився слот — найстаріший товар з паузи стає активним
@@ -716,7 +719,7 @@ async def do_delete(callback: CallbackQuery) -> None:
     count_after = await count_trackers(user.id)
     text = t(lang, "deleted", title=title, n=count_after)
     if activated:
-        titles = "\n".join(f"  ▶️ {(tr.title or t(lang, 'item'))[:40]}" for tr in activated)
+        titles = "\n".join(f"  ▶️ {html_escape((tr.title or t(lang, 'item'))[:40], quote=False)}" for tr in activated)
         text += t(lang, "deleted_activated", titles=titles)
     await callback.message.edit_text(
         text,
@@ -852,7 +855,7 @@ async def _show_tracker_settings(msg: Message, user: User, tracker: PriceTracker
     lang = user.lang
     text = t(
         lang, "settings_item",
-        title=html_escape((tracker.title or t(lang, "item"))[:60]),
+        title=html_escape((tracker.title or t(lang, "item"))[:60], quote=False),
         price=fmt_money(tracker.current_price, tracker.currency, lang),
     )
     keyboard = tracker_settings_keyboard(
@@ -1173,7 +1176,7 @@ async def process_feedback(message: Message, state: FSMContext) -> None:
 @router.message(Command("reply"))
 async def cmd_reply(message: Message) -> None:
     """
-    Використання: /reply 431742835 Дякую, виправив!
+    Використання: /reply 123456789 Дякую, виправив!
     Шле текст юзеру від імені бота і позначає його останній фідбек як "replied".
     """
     if not message.from_user or not message.bot:
@@ -1185,7 +1188,7 @@ async def cmd_reply(message: Message) -> None:
     if len(parts) < 3 or not parts[1].lstrip("-").isdigit() or not parts[2].strip():
         await message.answer(
             "Використання:\n<code>/reply TELEGRAM_ID текст відповіді</code>\n\n"
-            "Приклад: <code>/reply 431742835 Дякую, виправив!</code>",
+            "Приклад: <code>/reply 123456789 Дякую, виправив!</code>",
             parse_mode="HTML",
         )
         return
@@ -1225,58 +1228,63 @@ async def cmd_reply(message: Message) -> None:
     )
 
 
-# ─── Broadcast (тільки для адміна) ───────────────────────────────
-
-@router.message(Command("broadcast"))
-async def cmd_broadcast(message: Message) -> None:
-    if not message.from_user or not message.bot:
-        return
-
-    # Тільки адмін може надсилати broadcast
-    if message.from_user.id != int(settings.ADMIN_TELEGRAM_ID):
-        return
-
-    text = (message.text or "").removeprefix("/broadcast").strip()
-    if not text:
-        await message.answer(
-            "Використання:\n<code>/broadcast Текст повідомлення</code>",
-            parse_mode="HTML",
-        )
-        return
-
-    from sqlalchemy import select as sa_select
-    async with get_session() as session:
-        users = (await session.execute(
-            sa_select(User).where(User.is_blocked == False)
-        )).scalars().all()
-
-    await message.answer(f"⏳ Надсилаю {len(users)} юзерам...")
-
-    sent = failed = 0
-    for user in users:
-        try:
-            await message.bot.send_message(
-                chat_id=user.telegram_id,
-                text=text,
-                parse_mode="HTML",
-            )
-            sent += 1
-            # Telegram дозволяє ~30 повідомлень/сек групам і ~20/сек юзерам
-            await asyncio.sleep(0.05)
-        except Exception as e:
-            if "bot was blocked" in str(e).lower():
-                async with get_session() as s:
-                    u = await s.get(User, user.id)
-                    if u:
-                        u.is_blocked = True
-            failed += 1
-
-    await message.answer(
-        f"✅ <b>Broadcast завершено</b>\n\n"
-        f"📤 Надіслано: {sent}\n"
-        f"❌ Не вдалось: {failed}",
-        parse_mode="HTML",
-    )
+# ─── /broadcast ВИМКНЕНО (аудит 2026-10-13, N3) ─────────────────
+# Розсилав текст УСІМ користувачам одразу, без попереднього перегляду й підтвердження: одна помилка —
+# безповоротно в усіх, а викрадений Telegram адміна = готовий канал розсилки. Якщо колись знадобиться —
+# лише з переглядом, кнопкою «Надіслати», журналом у admin_actions і лімітом, краще з адмінки (2FA).
+#
+# # ─── Broadcast (тільки для адміна) ───────────────────────────────
+#
+# @router.message(Command("broadcast"))
+# async def cmd_broadcast(message: Message) -> None:
+#     if not message.from_user or not message.bot:
+#         return
+#
+#     # Тільки адмін може надсилати broadcast
+#     if message.from_user.id != int(settings.ADMIN_TELEGRAM_ID):
+#         return
+#
+#     text = (message.text or "").removeprefix("/broadcast").strip()
+#     if not text:
+#         await message.answer(
+#             "Використання:\n<code>/broadcast Текст повідомлення</code>",
+#             parse_mode="HTML",
+#         )
+#         return
+#
+#     from sqlalchemy import select as sa_select
+#     async with get_session() as session:
+#         users = (await session.execute(
+#             sa_select(User).where(User.is_blocked == False, User.bot_blocked == False)
+#         )).scalars().all()
+#
+#     await message.answer(f"⏳ Надсилаю {len(users)} юзерам...")
+#
+#     sent = failed = 0
+#     for user in users:
+#         try:
+#             await message.bot.send_message(
+#                 chat_id=user.telegram_id,
+#                 text=text,
+#                 parse_mode="HTML",
+#             )
+#             sent += 1
+#             # Telegram дозволяє ~30 повідомлень/сек групам і ~20/сек юзерам
+#             await asyncio.sleep(0.05)
+#         except Exception as e:
+#             if "bot was blocked" in str(e).lower():
+#                 async with get_session() as s:
+#                     u = await s.get(User, user.id)
+#                     if u:
+#                         u.bot_blocked = True
+#             failed += 1
+#
+#     await message.answer(
+#         f"✅ <b>Broadcast завершено</b>\n\n"
+#         f"📤 Надіслано: {sent}\n"
+#         f"❌ Не вдалось: {failed}",
+#         parse_mode="HTML",
+#     )
 
 
 # ─── /stats (тільки адмін) ───────────────────────────────────────
@@ -1300,7 +1308,7 @@ async def cmd_stats(message: Message) -> None:
 
         active_users = (await session.execute(
             select(func.count()).select_from(User)
-            .where(User.is_blocked == False)
+            .where(User.is_blocked == False, User.bot_blocked == False)
         )).scalar_one()
 
         premium_users = (await session.execute(
@@ -1367,7 +1375,7 @@ async def cmd_stats(message: Message) -> None:
 
     await message.answer(
         f"📊 <b>Статистика ЦінаБот</b>\n"
-        f"<i>{datetime.now(timezone.utc).strftime('%d.%m.%Y %H:%M')} UTC</i>\n\n"
+        f"<i>{now_kyiv().strftime('%d.%m.%Y %H:%M')} Київ</i>\n\n"
 
         f"👥 <b>Юзери</b>\n"
         f"  Всього: {total_users}\n"
@@ -1404,6 +1412,12 @@ async def cmd_pay_premium(callback: CallbackQuery) -> None:
 
     if user.is_premium:
         await callback.answer(t(lang, "already_premium_alert"), show_alert=True)
+        return
+
+    if not settings.CARD_NUMBER:
+        # Реквізитів у .env немає — не показуємо порожню інструкцію
+        await callback.message.answer(t(lang, "pay_unavailable"), parse_mode="HTML")
+        await callback.answer()
         return
 
     # Формуємо унікальне призначення платежу щоб легко знайти в банку
@@ -1446,8 +1460,8 @@ async def cmd_pay_premium(callback: CallbackQuery) -> None:
 async def cmd_activate(message: Message) -> None:
     """
     Ручна активація Premium адміном після перевірки оплати.
-    Використання: /activate 431742835
-    Або з терміном: /activate 431742835 60  (60 днів)
+    Використання: /activate 123456789
+    Або з терміном: /activate 123456789 60  (60 днів)
     """
     if not message.from_user:
         return
@@ -1460,7 +1474,7 @@ async def cmd_activate(message: Message) -> None:
             "Використання:\n"
             "<code>/activate TELEGRAM_ID</code>\n"
             "<code>/activate TELEGRAM_ID 60</code> (днів)\n\n"
-            "Приклад: <code>/activate 431742835</code>",
+            "Приклад: <code>/activate 123456789</code>",
             parse_mode="HTML",
         )
         return

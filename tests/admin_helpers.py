@@ -33,13 +33,14 @@ def utc(**delta) -> datetime:
 def reset_auth_state() -> None:
     auth._attempts.clear()
     auth._pending.clear()
+    auth.forget_session_cache()
 
 
 async def make_admin(username: str = "tester", password: str = PASSWORD,
-                     telegram_id: int | None = None, active: bool = True) -> Admin:
+                     telegram_id: int | None = None, active: bool = True, role: str = "owner") -> Admin:
     async with get_session() as s:
         a = Admin(username=username.lower(), password_hash=auth.hash_password(password),
-                  telegram_id=telegram_id, is_active=active)
+                  telegram_id=telegram_id, is_active=active, role=role)
         s.add(a)
         await s.flush()
         return a

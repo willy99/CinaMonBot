@@ -4,8 +4,11 @@
 - Пароль: scrypt (stdlib hashlib), формат "scrypt$<salt_hex>$<hash_hex>".
 - 2FA: 6-значний код надсилається адміну в Telegram через Bot API (той самий BOT_TOKEN).
   Коди живуть у пам'яті процесу: {admin_id: _PendingCode}.
-- Антиперебір: лічильник невдалих спроб на (username, ip), блок на N хвилин.
-- Сесія: app.storage.user["admin"] = {"id", "username", "login_at"}.
+- Антиперебір: лічильник невдалих спроб на (username, ip) у пам'яті, блок на N хвилин; плюс лічильник на логін
+  у БД (незалежно від IP, переживає рестарт) з порогом DB_LOCK_FACTOR × ADMIN_LOGIN_MAX_ATTEMPTS.
+- Сесія: app.storage.user["admin"] = {"id", "username", "role", "ver", "login_at"}. check_session() звіряє її з БД:
+  деактивація, зміна пароля / 2FA / ролі (session_version) одразу роблять чинні сесії недійсними.
+- Ролі: owner керує адмінами й поверненнями коштів; admin — решта.
 """
 from __future__ import annotations
 
@@ -14,7 +17,7 @@ import hmac
 import secrets
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import structlog
@@ -177,6 +180,91 @@ def verify_2fa(admin_id: str, code: str) -> tuple[bool, str]:
 
 # ─── Сесія ───────────────────────────────────────────────────────
 
+OWNER = "owner"
+DB_LOCK_FACTOR = 3
+_SESSION_CACHE_TTL = 5.0
+_session_cache: dict[str, tuple[float, bool, int, str]] = {}
+
+
+async def _admin_state(admin_id: str) -> tuple[bool, int, str]:
+    """(активний, session_version, role) з коротким кешем — middleware питає на кожен запит."""
+    now = time.monotonic()
+    cached = _session_cache.get(admin_id)
+    if cached and now - cached[0] < _SESSION_CACHE_TTL:
+        return cached[1:]
+    async with get_session() as session:
+        admin = await session.get(Admin, admin_id)
+    state = (bool(admin and admin.is_active), admin.session_version if admin else -1, admin.role if admin else "")
+    _session_cache[admin_id] = (now, *state)
+    return state
+
+
+def forget_session_cache(admin_id: str | None = None) -> None:
+    if admin_id is None:
+        _session_cache.clear()
+    else:
+        _session_cache.pop(admin_id, None)
+
+
+async def check_session() -> dict | None:
+    """current_admin() + звірка з БД. Недійсну сесію закриває. Для middleware і періодичної перевірки сторінок."""
+    data = current_admin()
+    if not data:
+        return None
+    active, version, role = await _admin_state(data["id"])
+    if not active or version != data.get("ver") or role != data.get("role"):
+        logger.info("admin_session_revoked", admin=data.get("username"))
+        logout()
+        return None
+    return data
+
+
+def is_owner() -> bool:
+    return (current_admin() or {}).get("role") == OWNER
+
+
+async def verify_current_password(admin_id: str, password: str) -> bool:
+    """Повторне підтвердження перед чутливою дією (зміна пароля / 2FA)."""
+    async with get_session() as session:
+        admin = await session.get(Admin, admin_id)
+    return bool(admin and admin.is_active and verify_password(password or "", admin.password_hash))
+
+
+async def db_lock_remaining(username: str) -> int:
+    """Скільки секунд ще заблоковано вхід під цим логіном (лічильник у БД)."""
+    async with get_session() as session:
+        admin = (await session.execute(select(Admin).where(Admin.username == username.strip().lower()))).scalar_one_or_none()
+    if not admin or not admin.locked_until:
+        return 0
+    return max(0, int((admin.locked_until - datetime.utcnow()).total_seconds()))
+
+
+async def db_register_failure(username: str) -> None:
+    async with get_session() as session:
+        admin = (await session.execute(select(Admin).where(Admin.username == username.strip().lower()))).scalar_one_or_none()
+        if not admin:
+            return
+        admin.failed_logins += 1
+        if admin.failed_logins >= settings.ADMIN_LOGIN_MAX_ATTEMPTS * DB_LOCK_FACTOR:
+            admin.locked_until = datetime.utcnow() + timedelta(minutes=settings.ADMIN_LOGIN_LOCK_MINUTES)
+            admin.failed_logins = 0
+            logger.warning("admin_login_locked_db", username=admin.username)
+
+
+async def db_register_success(admin_id: str) -> None:
+    async with get_session() as session:
+        admin = await session.get(Admin, admin_id)
+        if admin:
+            admin.failed_logins, admin.locked_until = 0, None
+
+
+def safe_next_path(path: str) -> str:
+    """Куди повернути після входу: лише локальний шлях («//host» і «/\\host» браузер сприйме як інший сайт)."""
+    if not path.startswith("/") or path.startswith(("//", "/\\")):
+        return "/"
+    return path
+
+
 def current_admin() -> dict | None:
     """{"id", "username", "login_at"} або None, якщо не залогінений / сесія прострочена."""
     try:
@@ -192,8 +280,12 @@ def current_admin() -> dict | None:
     return data
 
 
-def login_session(admin_id: str, username: str) -> None:
-    app.storage.user["admin"] = {"id": admin_id, "username": username, "login_at": time.time()}
+async def login_session(admin_id: str) -> None:
+    async with get_session() as session:
+        admin = await session.get(Admin, admin_id)
+    forget_session_cache(admin_id)
+    app.storage.user["admin"] = {"id": admin.id, "username": admin.username, "role": admin.role,
+                                 "ver": admin.session_version, "login_at": time.time()}
 
 
 def logout() -> None:
