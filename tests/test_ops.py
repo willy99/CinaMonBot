@@ -1,4 +1,4 @@
-"""A5: бекап бази (відновлюваний, ротація) і зовнішня перевірка живучості з алертом адміну."""
+"""A5: бекап бази (відновлюваний, ротація) і зовнішня перевірка живучості (пінг моніторингу, без Telegram)."""
 from __future__ import annotations
 
 import gzip
@@ -61,44 +61,31 @@ class Recorder:
 
 
 @pytest.fixture
-def health_env(tmp_path, monkeypatch):
-    monkeypatch.setattr(hc, "STATE_FILE", tmp_path / "state.json")
+def health_env(monkeypatch):
     monkeypatch.setattr(settings, "HEALTHCHECK_PING_URL", "https://hc-ping.example/uuid")
     monkeypatch.setattr(settings, "API_HEALTH_URL", "")
     return Recorder()
 
 
-async def test_stale_scheduler_alerts_once_then_recovers(db, health_env):
+async def test_stale_scheduler_pings_fail_but_never_telegram(db, health_env):
+    """14.10: технічні тривоги адміну в Telegram прибрано (спам). Лишився лише пінг зовнішнього моніторингу."""
     rec = health_env
     async with get_session() as s:
         s.add(Heartbeat(name="scheduler", at=datetime.utcnow() - timedelta(minutes=30)))
     async with rec.client() as c:
-        assert await hc.check(c, now=1000.0)
-        assert await hc.check(c, now=1300.0)
-        assert rec.telegram() == []                          # 5 хв збою — ще не тривога (поріг 10 хв)
-        assert await hc.check(c, now=1600.0)                 # 10 хв безперервно — тривога
-        assert await hc.check(c, now=1900.0)                 # ще погано, але алерт не повторюємо
-    tg = rec.telegram()
-    assert len(tg) == 1 and "планувальник" in tg[0] and "BOT_TOKEN" not in tg[0]
+        for _ in range(4):
+            problems = await hc.check(c)
+            assert problems and "планувальник" in problems[0]
     assert sum(1 for c in rec.calls if c[1].endswith("/fail")) == 4
 
     await heartbeat.beat(heartbeat.SCHEDULER)
     async with rec.client() as c:
-        assert await hc.check(c, now=2000.0) == []
-    assert "знову працює" in rec.telegram()[-1]
-    assert ("GET", "https://hc-ping.example/uuid", "") in rec.calls        # пінг «живий»
+        assert await hc.check(c) == []
+    assert rec.calls[-1][:2] == ("GET", "https://hc-ping.example/uuid")        # пінг «живий»
+    assert rec.telegram() == [] and not any("api.telegram.org" in c[1] for c in rec.calls)
 
 
-async def test_fresh_start_and_single_blip_are_silent(db, health_env):
-    """Щойно запущений бот (ще жодного тіку) і разовий збій не шлють адміну нічого — ні тривоги, ні «відновився»."""
-    rec = health_env
-    async with rec.client() as c:
-        assert await hc.check(c, now=1000.0) == []           # heartbeat ще не було — свіжий старт
-    async with get_session() as s:
-        s.add(Heartbeat(name="scheduler", at=datetime.utcnow() - timedelta(minutes=30)))
-    async with rec.client() as c:
-        assert await hc.check(c, now=1300.0)                 # один збій
-    await heartbeat.beat(heartbeat.SCHEDULER)
-    async with rec.client() as c:
-        assert await hc.check(c, now=1600.0) == []           # одразу відновився
-    assert rec.telegram() == []
+async def test_fresh_start_is_not_a_problem(db, health_env):
+    """Щойно запущений бот (ще жодного тіку) — не збій."""
+    async with health_env.client() as c:
+        assert await hc.check(c) == []

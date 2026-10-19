@@ -72,52 +72,22 @@ class _Rec:
         return [json.loads(c[2])["text"] for c in self.calls if "api.telegram.org" in c[1]]
 
 
-async def test_healthcheck_debounced_admin_only(kit, monkeypatch):
-    monkeypatch.setattr(hc, "STATE_FILE", kit.root / "state.json")
+async def test_healthcheck_never_messages_telegram(kit, monkeypatch):
+    """14.10: технічні тривоги в Telegram прибрано (спам «не тікав» / «на паузі»). Лишається лише пінг моніторингу."""
+    monkeypatch.setattr(kit.settings, "HEALTHCHECK_PING_URL", "https://hc-ping.example/uuid")
     rec = _Rec()
-    async with rec.client() as c:
-        assert await hc.check(c, now=1000.0) == []                   # свіжий старт — тиша
     async with kit.get_session() as s:
-        s.add(kit.models.Heartbeat(name="scheduler", at=datetime.utcnow() - timedelta(minutes=30)))
+        s.add(kit.models.Heartbeat(name="scheduler", at=datetime.utcnow() - timedelta(hours=3)))
     async with rec.client() as c:
-        await hc.check(c, now=1300.0)
-        assert rec.telegram() == []                                  # один збій — тиша
-        await hc.check(c, now=1600.0)
-        assert rec.telegram() == []                                  # 5 хв збою — ще тиша (поріг 10 хв)
-        await hc.check(c, now=1900.0)
-    assert len(rec.telegram()) == 1 and rec.telegram()[0].startswith("🚨 TestBot")
-    assert all('"chat_id": 1' in c[2] for c in rec.calls if "api.telegram.org" in c[1])   # лише адміну
+        for _ in range(5):                                           # годинами погано
+            assert await hc.check(c)
     await heartbeat.beat(heartbeat.SCHEDULER)
     async with rec.client() as c:
-        await hc.check(c, now=2200.0)
-    assert "знову працює" in rec.telegram()[-1]
-
-
-async def test_healthcheck_repeats_less_often_new_kind_at_once(kit, monkeypatch):
-    """13.10: УЗ лежала годинами — «uz на паузі вже N-й раз» щогодини. Тепер 1 год, 2 год, 4 год…;
-    новий вид проблеми (підтверджений другою перевіркою) — одразу."""
-    monkeypatch.setattr(hc, "STATE_FILE", kit.root / "state.json")
-    problems = ["uz на паузі вже 5-й раз (X)"]
-
-    async def fake_problems(client):
-        return list(problems)
-    monkeypatch.setattr(hc, "_problems", fake_problems)
-    rec = _Rec()
-    sent_at = []
-    async with rec.client() as c:
-        for minute in range(0, 9 * 60, 5):                            # 9 годин перевірок кожні 5 хв
-            problems[0] = f"uz на паузі вже {5 + minute // 30}-й раз (X)"
-            before = len(rec.telegram())
-            await hc.check(c, now=minute * 60.0)
-            if len(rec.telegram()) > before:
-                sent_at.append(minute)
-    assert sent_at == [10, 70, 190, 430]                              # +1 год, +2 год, +4 год
-    async with rec.client() as c:
-        problems.append("планувальник бота не тікав 900 с")
-        await hc.check(c, now=(9 * 60 + 5) * 60.0)
-        assert len(rec.telegram()) == 4                               # новий вид — ще одна перевірка
-        await hc.check(c, now=(9 * 60 + 10) * 60.0)
-    assert len(rec.telegram()) == 5 and "не тікав" in rec.telegram()[-1]
+        assert await hc.check(c) == []                               # відновився
+    assert rec.telegram() == [] and not any("api.telegram.org" in c[1] for c in rec.calls)
+    fails = [c for c in rec.calls if c[1].endswith("/fail")]
+    assert len(fails) == 5 and "не тікав" in fails[0][2]
+    assert rec.calls[-1][:2] == ("GET", "https://hc-ping.example/uuid")
 
 
 async def test_backup_restorable_and_pruned(kit):
@@ -143,22 +113,3 @@ async def test_middlewares(kit):
     results = [await mw(handler, MagicMock(), {"event_from_user": who(13)}) for _ in range(22)]
     assert results.count("ok") == 20 and results[-1] is None
     assert await mw(handler, MagicMock(), {"event_from_user": who(1)}) == "ok"      # адмін без ліміту
-
-
-async def test_healthcheck_silent_after_laptop_sleep(kit, monkeypatch):
-    """13.10: Mac спав 25 хв — бот не тікав, а pm2 після пробудження зробив дві перевірки за 18 с → хибна тривога."""
-    monkeypatch.setattr(hc, "STATE_FILE", kit.root / "state.json")
-    rec = _Rec()
-    await heartbeat.beat(heartbeat.SCHEDULER)
-    async with rec.client() as c:
-        await hc.check(c, now=1000.0)                                # усе добре, далі сон
-    async with kit.get_session() as s:
-        hb = await s.get(kit.models.Heartbeat, "scheduler")
-        hb.at = datetime.utcnow() - timedelta(minutes=26)
-    async with rec.client() as c:
-        await hc.check(c, now=1000.0 + 26 * 60)                      # прокинулись: heartbeat старий
-        await hc.check(c, now=1000.0 + 26 * 60 + 18)                 # pm2 надолужує
-    await heartbeat.beat(heartbeat.SCHEDULER)                        # бот тікнув після пробудження
-    async with rec.client() as c:
-        await hc.check(c, now=1000.0 + 31 * 60)
-    assert rec.telegram() == []                                      # ні тривоги, ні «знову працює»
