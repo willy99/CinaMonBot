@@ -40,6 +40,8 @@ logger = structlog.get_logger(__name__)
 scheduler = AsyncIOScheduler(timezone="Europe/Kyiv")
 
 # НОВЕ: максимум перевірок за один запуск — обмежує пікове навантаження
+# Після кінця торгів ще кілька годин перевіряємо (фінальна ціна, продовження +5 хв), далі — ні
+ENDED_AUCTION_GRACE = timedelta(hours=6)
 MAX_CHECKS_PER_RUN = 200
 
 
@@ -96,6 +98,18 @@ def setup_scheduler(bot) -> None:
         args=[bot],
         id="weekly_digest",
         replace_existing=True,
+    )
+    # Нагадування перед кінцем торгів (аукціони): лише читання бази, сайт не запитується
+    from app.scheduler.reminders import send_ending_reminders
+    scheduler.add_job(
+        send_ending_reminders,
+        trigger="interval",
+        minutes=1,
+        args=[bot],
+        id="ending_reminders",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
     )
     scheduler.start()
     logger.info("scheduler_started", interval_minutes=5, max_per_run=MAX_CHECKS_PER_RUN)
@@ -206,6 +220,8 @@ async def _dispatch_price_checks(bot) -> None:
         )
         if tracker.source and breaker.is_open(tracker.source):
             continue                  # магазин тимчасово недоступний — last_checked_at не чіпаємо
+        if tracker.ends_at is not None and tracker.ends_at < now.replace(tzinfo=None) - ENDED_AUCTION_GRACE:
+            continue                  # торги давно завершені, фінальна ціна вже є — не смикаємо сайт
         if tracker.last_checked_at is None:
             to_check.append(tracker)
         else:
@@ -336,6 +352,13 @@ async def check_single_price(tracker: PriceTracker, bot) -> None:
         db_tracker.consecutive_errors = 0
         if tracker.source:
             breaker.success(tracker.source)
+        # Аукціон: час закінчення може зсуватися (+5 хв за ставку наприкінці, переподання лота)
+        new_end = _naive_utc(getattr(result, "ends_at", None))
+        if new_end is not None:
+            old_end = db_tracker.ends_at
+            if old_end is not None and db_tracker.ending_notified_at is not None and new_end - old_end > timedelta(hours=2):
+                db_tracker.ending_notified_at = None      # торги перенесли далеко — нагадаємо ще раз
+            db_tracker.ends_at = new_end
 
         # Пишемо в історію
         if result.price is not None:
@@ -345,10 +368,13 @@ async def check_single_price(tracker: PriceTracker, bot) -> None:
                 is_available=result.is_available,
             ))
 
-        # Чи вже сповіщали про досягнуту ціль — лише коли ціна зараз на/під ціллю (інакше не потрібно)
+        # Чи вже сповіщали про досягнуту ціль — лише коли ціна зараз за межею цілі (інакше не потрібно)
         target_notified = False
-        if db_tracker.target_price and result.price and result.price <= db_tracker.target_price:
-            target_notified = await _target_already_notified(session, db_tracker.id)
+        if db_tracker.target_price and result.price:
+            past = (result.price >= db_tracker.target_price if db_tracker.target_direction == "above"
+                    else result.price <= db_tracker.target_price)
+            if past:
+                target_notified = await _target_already_notified(session, db_tracker.id)
 
         # Визначаємо тип події
         event = _detect_event(
@@ -358,6 +384,7 @@ async def check_single_price(tracker: PriceTracker, bot) -> None:
             old_available=old_available,
             new_available=result.is_available,
             target_notified=target_notified,
+            target_direction=db_tracker.target_direction,
         )
 
         if event:
@@ -415,6 +442,8 @@ def _suppression_reason(
     if event in (PriceEventType.DECREASE, PriceEventType.TARGET_REACHED):
         if not tracker.notify_drop:
             return "muted_drop"
+    if event == PriceEventType.DECREASE and _is_auction(tracker):
+        return "auction_no_generic_drop"      # на аукціоні — лише ціль, яку юзер задав сам
     return None
 
 
@@ -430,6 +459,18 @@ async def _target_already_notified(session, tracker_id: str) -> bool:
     return row.first() is not None
 
 
+def _is_auction(tracker: PriceTracker) -> bool:
+    from app.services.scrapers.registry import platform_for
+    p = platform_for(tracker.source or "")
+    return bool(p and p.auction)
+
+
+def _naive_utc(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt.tzinfo else dt
+
+
 def _detect_event(
     old_price: Decimal | None,
     new_price: Decimal | None,
@@ -437,23 +478,32 @@ def _detect_event(
     old_available: bool,
     new_available: bool,
     target_notified: bool = False,
+    target_direction: str | None = None,
 ) -> PriceEventType | None:
     """
     Визначає чи потрібно сповіщення і якого типу.
 
+    Ціль: below (типово) — ціна ≤ цілі; above (аукціони) — ціна ≥ цілі.
     target_notified — по трекеру вже надсилали TARGET_REACHED. Тоді ціль знову сповіщаємо лише
-    коли ціна щойно перетнула її згори (була вище цілі), а не на кожній перевірці, поки ціна під ціллю.
+    коли ціна щойно перетнула межу (була по інший бік), а не на кожній перевірці, поки ціна за межею.
     """
 
     # Товар знову з'явився
     if not old_available and new_available:
         return PriceEventType.RESTOCK
 
-    # Ціна досягла цільової
-    if target_price and new_price and new_price <= target_price:
-        crossed = old_price is not None and old_price > target_price
-        if crossed or not target_notified:
-            return PriceEventType.TARGET_REACHED
+    if target_price and new_price:
+        if target_direction == "above":
+            if new_price >= target_price:
+                crossed = old_price is not None and old_price < target_price
+                if crossed or not target_notified:
+                    return PriceEventType.TARGET_REACHED
+            return None                       # для «перевищить» зниження ціни — не подія
+        # Ціна досягла цільової
+        if new_price <= target_price:
+            crossed = old_price is not None and old_price > target_price
+            if crossed or not target_notified:
+                return PriceEventType.TARGET_REACHED
 
     # Ціна впала більш ніж на 3%
     if old_price and new_price and new_price < old_price:
@@ -493,6 +543,15 @@ async def _send_notification(
             lang, "notif_restock",
             title=title_short,
             price=fmt_money(new_price, cur, lang),
+            url=safe_url,
+        )
+    elif event == PriceEventType.TARGET_REACHED and tracker.target_direction == "above":
+        # Аукціон: ставки перейшли межу, яку юзер задав
+        text = t(
+            lang, "notif_target_above",
+            title=title_short,
+            price=fmt_money(new_price, cur, lang),
+            target=fmt_money(tracker.target_price, cur, lang),
             url=safe_url,
         )
     elif event == PriceEventType.TARGET_REACHED and tracker.target_percent:

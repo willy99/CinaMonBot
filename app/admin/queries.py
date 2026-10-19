@@ -333,14 +333,26 @@ async def user_detail(user_id: str) -> dict | None:
     }
 
 
-async def tracker_history(tracker_id: str, limit: int = 300) -> list[tuple[str, float]]:
+async def tracker_history(tracker_id: str, limit: int = 500) -> list[tuple[str, float]]:
+    """
+    Історія ціни за весь час як моменти змін: перший запис, кожна зміна ціни й останній запис
+    (щоб лінія доходила до «зараз»). Для ступінчастого графіка це без втрат, а premium-трекер
+    із перевіркою щогодини не впирається в ліміт за тиждень-два. Якщо змін більше за `limit` —
+    залишаємо найсвіжіші.
+    """
     async with get_session() as s:
         rows = (await s.execute(
             select(PriceHistory.recorded_at, PriceHistory.price)
             .where(PriceHistory.tracker_id == tracker_id)
-            .order_by(PriceHistory.recorded_at.asc()).limit(limit)
+            .order_by(PriceHistory.recorded_at.asc())
         )).all()
-    return [(fmt(dt, "%Y-%m-%d %H:%M"), float(p)) for dt, p in rows]
+    points: list[tuple[str, float]] = []
+    last = len(rows) - 1
+    for i, (dt, price) in enumerate(rows):
+        value = float(price)
+        if i == 0 or i == last or value != float(rows[i - 1][1]):
+            points.append((fmt(dt, "%Y-%m-%d %H:%M"), value))
+    return points[-limit:] if limit else points
 
 
 async def set_premium(user_id: str, days: int) -> datetime | None:

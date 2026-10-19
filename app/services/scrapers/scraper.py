@@ -78,6 +78,8 @@ class ProductData:
     canonical_url: str
     # Яка стратегія дала результат: "json-ld" | "microdata" | "opengraph" | "selectors" | "heuristic"
     strategy: str = ""
+    # Аукціони: коли закінчуються торги (aware datetime); для магазинів — None
+    ends_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -905,6 +907,39 @@ class NotinoScraper(AbstractScraper):
         return None
 
 
+# ─── Violity ─────────────────────────────────────────────────────
+
+class ViolityScraper(AbstractScraper):
+    """
+    Violity (аукціон): ціна — поточна найвища ставка в грн зі сторінки лота
+    (метатеги дають перераховану в USD — не те, що бачить покупець).
+    Торги завершені → is_available=False. Канонічне посилання — за номером лота.
+    """
+
+    domain = "violity.com"
+
+    def canonicalize_url(self, url: str) -> str:
+        from app.services.scrapers.violity import lot_id
+        lid = lot_id(url)
+        if lid:
+            return f"https://violity.com/ua/{lid}"
+        parsed = urlparse(url)
+        return urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path or "/", "", "", ""))
+
+    def _parse(self, html: str, url: str) -> ScrapeResult:
+        from app.services.scrapers.violity import extract_violity
+        try:
+            data = extract_violity(html, url)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("violity_extract_failed", error=str(e))
+            data = None
+        # Не сторінка лота (каталог, пошук) — не підставляємо USD-ціну з метатегів
+        return data if data is not None else ScrapeError(url=url, reason="parse_failed")
+
+    async def _try_heal(self, html: str, url: str) -> ScrapeResult | None:
+        return None
+
+
 # ─── Factory ─────────────────────────────────────────────────────
 
 _SCRAPERS: list[type[AbstractScraper]] = [
@@ -912,6 +947,7 @@ _SCRAPERS: list[type[AbstractScraper]] = [
     OLXScraper,
     PromScraper,
     NotinoScraper,
+    ViolityScraper,
 ]
 
 

@@ -89,7 +89,7 @@ def test_factory_is_specific_and_supported_domains():
     assert ScraperFactory.is_specific("https://rozetka.com.ua/x") is True
     assert ScraperFactory.is_specific("https://comfy.ua/x") is False
     assert ScraperFactory.is_specific("nope") is False
-    assert ScraperFactory.supported_domains() == ["rozetka.com.ua", "olx.ua", "prom.ua", "notino.ua"]
+    assert ScraperFactory.supported_domains() == ["rozetka.com.ua", "olx.ua", "prom.ua", "notino.ua", "violity.com"]
     assert ScraperFactory.is_specific("https://www.notino.ua/x/") is True
 
 

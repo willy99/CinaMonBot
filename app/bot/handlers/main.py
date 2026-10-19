@@ -15,11 +15,14 @@ Bot handlers — чиста версія.
 """
 from __future__ import annotations
 
+import re
+from contextlib import suppress
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from urllib.parse import urlparse
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -40,6 +43,7 @@ from app.services import runtime_settings as rt
 from app.database.session import get_session
 from app.database.models import Feedback, PriceTracker, TrackerStatus, User
 from app.i18n import LANGUAGES, country_label, fmt_date, fmt_money, fmt_percent, t
+from app.bot.links import urls_from_message
 from app.services.limits import extend_premium, sync_free_limit
 from app.timeutil import now_kyiv
 from app.services.scrapers.registry import PLATFORMS, platform_for, verified_platforms
@@ -69,8 +73,8 @@ async def cmd_cancel(event: Message | CallbackQuery, state: FSMContext) -> None:
 
 # ─── DB helpers ──────────────────────────────────────────────────
 
-async def get_or_create_user(from_user) -> User:
-    """Завжди передавай event.from_user — там реальна людина."""
+async def get_or_create_user(from_user, source: str | None = None) -> User:
+    """Завжди передавай event.from_user — там реальна людина. source — лише для нового юзера (?start=<джерело>)."""
     from sqlalchemy import select
     from sqlalchemy.exc import IntegrityError
     async with get_session() as session:
@@ -85,10 +89,11 @@ async def get_or_create_user(from_user) -> User:
                     username=getattr(from_user, "username", None),
                     first_name=getattr(from_user, "first_name", None),
                     language_code=getattr(from_user, "language_code", None) or "uk",
+                    source=source,
                 )
                 session.add(user)
                 await session.flush()
-                logger.info("new_user", telegram_id=from_user.id)
+                logger.info("new_user", telegram_id=from_user.id, source=source)
             except IntegrityError:
                 # Race condition: інший запит вже створив юзера — просто завантажуємо
                 await session.rollback()
@@ -167,10 +172,26 @@ def _main_menu(lang: str, is_premium: bool) -> InlineKeyboardMarkup:
 # ─── /start ──────────────────────────────────────────────────────
 
 @router.message(CommandStart())
+def start_payload(text: str | None) -> str:
+    """'/start wl_abc' → 'wl_abc'; лише символи, дозволені Telegram для deep link (A-Z a-z 0-9 _ -)."""
+    parts = (text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        return ""
+    payload = parts[1].strip()
+    return payload if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", payload) else ""
+
+
 async def cmd_start(message: Message) -> None:
     if not message.from_user:
         return
-    user = await get_or_create_user(message.from_user)
+    payload = start_payload(message.text)
+    if payload.startswith("wl_"):
+        # Хтось поділився своїм списком бажань — показуємо його замість привітання
+        from app.bot.handlers.wishlist import show_shared_list
+        viewer = await get_or_create_user(message.from_user, source="wishlist")
+        await show_shared_list(message, viewer, payload[3:])
+        return
+    user = await get_or_create_user(message.from_user, source=payload[:32] or None)
     lang = user.lang
     name = message.from_user.first_name or t(lang, "default_name")
 
@@ -306,14 +327,21 @@ async def cmd_add(event: Message | CallbackQuery, state: FSMContext) -> None:
 
 @router.message(AddTrackerStates.waiting_for_url)
 async def process_url(message: Message, state: FSMContext) -> None:
-    if not message.text or not message.from_user:
+    if not (message.text or message.caption) or not message.from_user:
         return
 
     user = await get_or_create_user(message.from_user)
     lang = user.lang
 
-    url = message.text.strip()
-    scraper = ScraperFactory.get(url)
+    # Посилання з будь-якого тексту: «Поділитися» з застосунку магазину дає «назва + посилання»
+    urls = urls_from_message(message)
+    if len(urls) > 1:
+        await state.clear()
+        from app.bot.bulk import bulk_add
+        await bulk_add(message, user, urls)
+        return
+    url = urls[0] if urls else (message.text or message.caption or "").strip()
+    scraper = ScraperFactory.get(url) if urls else None
     if not scraper:
         # Універсальний парсер приймає будь-який http(s) URL — None лише для не-посилань
         await message.answer(t(lang, "not_a_url"))
@@ -358,6 +386,10 @@ async def process_url(message: Message, state: FSMContext) -> None:
     price_text = fmt_money(result.price, currency, lang) if result.price else t(lang, "price_unknown")
     avail = t(lang, "in_stock") if result.is_available else t(lang, "out_of_stock")
 
+    if platform is not None and platform.auction:
+        await _ask_auction_direction(wait, state, lang, url, result, domain, currency, price_text)
+        return
+
     await state.update_data(
         url=url,
         canonical_url=result.canonical_url,
@@ -374,6 +406,99 @@ async def process_url(message: Message, state: FSMContext) -> None:
         parse_mode="HTML",
     )
     await state.set_state(AddTrackerStates.waiting_for_target_price)
+
+
+def _auction_keyboard(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t(lang, "btn_tdir_above"), callback_data="tdir:above")],
+        [InlineKeyboardButton(text=t(lang, "btn_tdir_below"), callback_data="tdir:below")],
+        [InlineKeyboardButton(text=t(lang, "btn_auction_no_target"), callback_data="skip_target")],
+    ])
+
+
+async def _ask_auction_direction(wait, state: FSMContext, lang: str, url: str, result, domain: str,
+                                 currency: str, price_text: str) -> None:
+    """Аукціон (Violity): ціна рухається ставками — питаємо, як сповіщати: перевищить чи впаде нижче."""
+    from app.timeutil import fmt as _fmt
+    title = html_escape(result.title or "", quote=False)
+    if not result.is_available:
+        await state.clear()
+        await wait.edit_text(t(lang, "auction_ended_at_add", title=title, price=price_text), parse_mode="HTML")
+        return
+    ends_at = getattr(result, "ends_at", None)
+    await state.update_data(
+        url=url, canonical_url=result.canonical_url, source=domain, title=result.title,
+        price=str(result.price) if result.price else None, currency=currency,
+        auction=True, direction=None, ends_at=ends_at.isoformat() if ends_at else None,
+    )
+    await wait.edit_text(
+        t(lang, "auction_card", title=title, price=price_text,
+          end=_fmt(ends_at, "%d.%m.%Y %H:%M") if ends_at else "—"),
+        reply_markup=_auction_keyboard(lang), parse_mode="HTML",
+    )
+    await state.set_state(AddTrackerStates.waiting_for_target_price)
+
+
+@router.callback_query(F.data.in_({"tdir:above", "tdir:below"}))
+async def choose_target_direction(callback: CallbackQuery, state: FSMContext) -> None:
+    if not callback.from_user or not callback.message:
+        return
+    user = await get_or_create_user(callback.from_user)
+    lang = user.lang
+    data = await state.get_data()
+    if not data.get("auction"):
+        await callback.answer()
+        return
+    direction = callback.data.split(":", 1)[1]
+    await state.update_data(direction=direction)
+    price = fmt_money(Decimal(data["price"]), data.get("currency"), lang) if data.get("price") else t(lang, "price_unknown")
+    await callback.message.edit_text(
+        t(lang, "ask_target_above" if direction == "above" else "ask_target_below",
+          currency=data.get("currency") or "UAH", price=price),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=t(lang, "btn_auction_no_target"), callback_data="skip_target")],
+        ]),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+def percent_target_price_up(baseline: Decimal, pct: Decimal) -> Decimal:
+    """baseline × (1 + pct/100) — «сповісти, коли ціна виросте на N%» (аукціони)."""
+    return (Decimal(baseline) * (Decimal(100) + Decimal(pct)) / Decimal(100)).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP,
+    )
+
+
+TARGET_PERCENT_UP_MAX = Decimal("1000")
+
+
+async def _process_auction_target(message: Message, state: FSMContext, user: User, data: dict, kind: str, value: Decimal) -> None:
+    lang = user.lang
+    direction = data.get("direction")
+    if direction not in ("above", "below"):
+        await message.answer(t(lang, "auction_choose_direction"), reply_markup=_auction_keyboard(lang), parse_mode="HTML")
+        return
+    current = Decimal(data["price"]) if data.get("price") else None
+    target_percent = baseline = None
+    if kind == "percent":
+        top = TARGET_PERCENT_UP_MAX if direction == "above" else TARGET_PERCENT_MAX
+        if not (TARGET_PERCENT_MIN <= value <= top) or current is None:
+            await message.answer(t(lang, "target_percent_range" if current is not None else "target_percent_no_price"), parse_mode="HTML")
+            return
+        target = percent_target_price_up(current, value) if direction == "above" else percent_target_price(current, value)
+        target_percent, baseline = value, current
+    else:
+        target = value
+    if current is not None:
+        cur_text = fmt_money(current, data.get("currency"), lang)
+        if direction == "above" and target <= current:
+            await message.answer(t(lang, "auction_above_invalid", price=cur_text), parse_mode="HTML")
+            return
+        if direction == "below" and target >= current:
+            await message.answer(t(lang, "auction_below_invalid", price=cur_text), parse_mode="HTML")
+            return
+    await _save_tracker(message.from_user, state, message, target, target_percent=target_percent, baseline_price=baseline)
 
 
 # Ціль у відсотках: межі "скажи, коли впаде на N%"
@@ -427,6 +552,11 @@ async def process_target(message: Message, state: FSMContext) -> None:
         return
 
     kind, value = parsed
+    data = await state.get_data()
+    if data.get("auction"):
+        user = await get_or_create_user(message.from_user)
+        await _process_auction_target(message, state, user, data, kind, value)
+        return
     if kind == "amount":
         await _save_tracker(message.from_user, state, message, value)
         return
@@ -456,6 +586,61 @@ async def skip_target(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
+async def create_tracker(user_id: str, *, url: str, canonical_url: str, source: str, title: str | None,
+                         price, currency: str = "UAH", target_price=None, target_percent=None,
+                         baseline_price=None, target_direction: str | None = None, ends_at=None,
+                         remind_before_minutes: int | None = None) -> str | None:
+    """
+    Створює трекер і повертає його id; None — цей товар (canonical_url) у юзера вже є.
+    Спільне для /add, масового додавання і «стежити» зі списку бажань друга.
+    Ліміт безкоштовного плану застосовує окремо sync_free_limit().
+    """
+    from sqlalchemy import select
+    async with get_session() as session:
+        exists = (await session.execute(
+            select(PriceTracker.id).where(
+                PriceTracker.user_id == user_id,
+                PriceTracker.canonical_url == canonical_url,
+            )
+        )).scalar_one_or_none()
+        if exists:
+            return None
+        tracker = PriceTracker(
+            user_id=user_id,
+            url=url,
+            canonical_url=canonical_url,
+            source=source,
+            title=title,
+            current_price=Decimal(str(price)) if price not in (None, "") else None,
+            currency=(currency or "UAH").upper(),
+            target_price=target_price,
+            target_percent=target_percent,
+            baseline_price=baseline_price,
+            target_direction=target_direction,
+            ends_at=_to_naive_utc(ends_at),
+            remind_before_minutes=remind_before_minutes,
+            status=TrackerStatus.ACTIVE,
+            # Явний час з мікросекундами: порядок "найстаріші активні" має бути детермінованим
+            created_at=datetime.utcnow(),
+        )
+        session.add(tracker)
+        await session.flush()
+        return tracker.id
+
+
+def _to_naive_utc(dt):
+    """aware/ISO-рядок/naive → naive UTC (так зберігаємо в базі)."""
+    from datetime import timezone as _tz
+    if dt is None or dt == "":
+        return None
+    if isinstance(dt, str):
+        dt = datetime.fromisoformat(dt)
+    return dt.astimezone(_tz.utc).replace(tzinfo=None) if dt.tzinfo else dt
+
+
+DEFAULT_REMIND_MINUTES = 60
+
+
 async def _save_tracker(from_user, state, msg, target_price, *, target_percent=None, baseline_price=None):
     """
     target_price — абсолютна ціль (або None). Для цілі у відсотках додатково target_percent
@@ -469,37 +654,19 @@ async def _save_tracker(from_user, state, msg, target_price, *, target_percent=N
     lang = user.lang
     currency = data.get("currency") or "UAH"
 
-    async with get_session() as session:
-        from sqlalchemy import select
-        exists = (await session.execute(
-            select(PriceTracker).where(
-                PriceTracker.user_id == user.id,
-                PriceTracker.canonical_url == data["canonical_url"],
-            )
-        )).scalar_one_or_none()
-
-        if exists:
-            await msg.answer(t(lang, "already_tracked"))
-            return
-
-        tracker = PriceTracker(
-            user_id=user.id,
-            url=data["url"],
-            canonical_url=data["canonical_url"],
-            source=data["source"],
-            title=data.get("title"),
-            current_price=Decimal(data["price"]) if data.get("price") else None,
-            currency=currency,
-            target_price=target_price,
-            target_percent=target_percent,
-            baseline_price=baseline_price,
-            status=TrackerStatus.ACTIVE,
-            # Явний час з мікросекундами: порядок "найстаріші активні" має бути детермінованим
-            created_at=datetime.utcnow(),
-        )
-        session.add(tracker)
-        await session.flush()
-        new_id = tracker.id
+    auction = bool(data.get("auction"))
+    direction = data.get("direction") if auction and target_price else None
+    ends_at = _to_naive_utc(data.get("ends_at")) if auction else None
+    remind = DEFAULT_REMIND_MINUTES if ends_at and ends_at > datetime.utcnow() else None
+    new_id = await create_tracker(
+        user.id, url=data["url"], canonical_url=data["canonical_url"], source=data["source"],
+        title=data.get("title"), price=data.get("price"), currency=currency,
+        target_price=target_price, target_percent=target_percent, baseline_price=baseline_price,
+        target_direction=direction, ends_at=ends_at, remind_before_minutes=remind,
+    )
+    if new_id is None:
+        await msg.answer(t(lang, "already_tracked"))
+        return
 
     # Free: понад ліміт новий товар одразу йде на паузу і не перевіряється
     _, paused_now = await sync_free_limit(user.id)
@@ -512,7 +679,10 @@ async def _save_tracker(from_user, state, msg, target_price, *, target_percent=N
     else:
         slot_text = ""
 
-    if target_price and target_percent:
+    if target_price and auction:
+        key = "added_target_above" if direction == "above" else "added_target_below_auction"
+        target_text = t(lang, key, price=fmt_money(target_price, currency, lang))
+    elif target_price and target_percent:
         target_text = t(lang, "added_target_percent", pct=fmt_percent(target_percent, lang),
                         price=fmt_money(target_price, currency, lang))
     elif target_price:
@@ -520,9 +690,15 @@ async def _save_tracker(from_user, state, msg, target_price, *, target_percent=N
     else:
         target_text = ""
 
+    markup = None
+    if remind:
+        from app.bot.keyboards import reminder_keyboard
+        from app.timeutil import fmt as _fmt
+        target_text += t(lang, "added_reminder", end=_fmt(ends_at, "%d.%m %H:%M"))
+        markup = reminder_keyboard(lang, new_id, remind)
     await msg.answer(
         t(lang, "added", title=html_escape((data.get("title") or "")[:60], quote=False), target=target_text, slots=slot_text),
-        parse_mode="HTML",
+        parse_mode="HTML", reply_markup=markup,
     )
 
 
@@ -549,6 +725,8 @@ def list_target_text(tr: PriceTracker, lang: str) -> str:
     """Хвіст рядка /list: ' → 🎯−15%' для цілі у відсотках, ' → 🎯3 825 грн' для абсолютної, '' без цілі."""
     if not tr.target_price:
         return ""
+    if tr.target_direction == "above":
+        return t(lang, "list_target_above", price=fmt_money(tr.target_price, tr.currency, lang))
     if tr.target_percent:
         return t(lang, "list_target_percent", pct=fmt_percent(tr.target_percent, lang))
     return f" → 🎯{fmt_money(tr.target_price, tr.currency, lang)}"
@@ -614,6 +792,7 @@ async def _show_list(user: User, msg: Message) -> None:
                 InlineKeyboardButton(text=t(lang, "btn_delete"), callback_data="delete_menu"),
                 InlineKeyboardButton(text=t(lang, "btn_settings_short"), callback_data="settings_menu"),
             ],
+            [InlineKeyboardButton(text=t(lang, "btn_share_list"), callback_data="share_menu")],
             [] if user.is_premium else [
                 InlineKeyboardButton(text=t(lang, "btn_activate_premium"), callback_data="premium_info")
             ],
@@ -861,9 +1040,67 @@ async def _show_tracker_settings(msg: Message, user: User, tracker: PriceTracker
     )
     keyboard = tracker_settings_keyboard(
         lang, tracker.id, notify_drop=tracker.notify_drop, notify_restock=tracker.notify_restock,
+        remind_minutes=tracker.remind_before_minutes, auction=_is_auction_source(tracker.source),
     )
     send = msg.edit_text if edit else msg.answer
     await send(text, reply_markup=keyboard, parse_mode="HTML")
+
+
+def _is_auction_source(source: str | None) -> bool:
+    p = platform_for(_norm_host(source or ""))
+    return bool(p and p.auction)
+
+
+async def _set_reminder(callback: CallbackQuery) -> tuple[User, PriceTracker, int] | None:
+    """rem:<хв>:<id> / trem:<хв>:<id> → зберегти «за скільки нагадати» (0 — вимкнути) для свого трекера."""
+    from app.bot.keyboards import REMIND_OPTIONS, reminder_label
+    if not callback.from_user or not callback.message:
+        return None
+    user = await get_or_create_user(callback.from_user)
+    lang = user.lang
+    try:
+        _, raw, tracker_id = callback.data.split(":", 2)
+        minutes = int(raw)
+    except ValueError:
+        await callback.answer()
+        return None
+    if minutes not in (*REMIND_OPTIONS, 0):
+        await callback.answer()
+        return None
+    async with get_session() as session:
+        tracker = await session.get(PriceTracker, tracker_id)
+        if not tracker:
+            await callback.answer(t(lang, "not_found"))
+            return None
+        if tracker.user_id != user.id:
+            logger.warning("tracker_access_denied", telegram_id=callback.from_user.id, tracker_id=tracker_id, action="remind")
+            await callback.answer(t(lang, "no_access"))
+            return None
+        tracker.remind_before_minutes = minutes or None
+        if minutes:
+            tracker.ending_notified_at = None      # обрали інший час — нагадаємо за новим
+    await callback.answer(t(lang, "settings_toast_reminder", value=reminder_label(lang, minutes)))
+    return user, tracker, minutes
+
+
+@router.callback_query(F.data.startswith("rem:"))
+async def choose_reminder(callback: CallbackQuery) -> None:
+    """Кнопки «1 год · 30 хв · 15 хв · 5 хв» під повідомленням «Додано!» — міняємо лише ✅."""
+    from app.bot.keyboards import reminder_keyboard
+    res = await _set_reminder(callback)
+    if res:
+        user, tracker, minutes = res
+        with suppress(TelegramBadRequest):        # той самий вибір вдруге — «message is not modified»
+            await callback.message.edit_reply_markup(reply_markup=reminder_keyboard(user.lang, tracker.id, minutes or None))
+
+
+@router.callback_query(F.data.startswith("trem:"))
+async def choose_reminder_in_settings(callback: CallbackQuery) -> None:
+    res = await _set_reminder(callback)
+    if res:
+        user, tracker, _ = res
+        with suppress(TelegramBadRequest):
+            await _show_tracker_settings(callback.message, user, tracker, edit=True)
 
 
 @router.callback_query(F.data.startswith("tset:"))

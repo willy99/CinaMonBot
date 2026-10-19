@@ -220,8 +220,29 @@ async def test_tracker_history_ascending_with_limit(seed):
     points = await q.tracker_history(seed.t1.id)
     assert [p for _, p in points] == [42000.0, 40500.0, 41000.0]
     assert points[0][0] == fmt(seed.history[2][0], "%Y-%m-%d %H:%M")
-    assert await q.tracker_history(seed.t1.id, limit=2) == points[:2]
+    # Ліміт залишає НАЙСВІЖІШІ зміни (раніше — найстаріші, і графік застигав у минулому)
+    assert await q.tracker_history(seed.t1.id, limit=2) == points[-2:]
     assert await q.tracker_history(seed.t2.id) == []
+
+
+async def test_tracker_history_compresses_to_changes_and_reaches_now(db):
+    """Premium-трекер: перевірка щогодини 40 днів (960 записів), ціна мінялась 3 рази."""
+    from datetime import datetime, timedelta
+    from decimal import Decimal
+    from app.database.models import PriceHistory, PriceTracker, User
+    from app.database.session import get_session
+    start = datetime.utcnow() - timedelta(days=40)
+    async with get_session() as s:
+        u = User(telegram_id=1, language_code="uk"); s.add(u); await s.flush()
+        tr = PriceTracker(user_id=u.id, url="https://x.ua/p", canonical_url="https://x.ua/p", source="x.ua", status="active")
+        s.add(tr); await s.flush()
+        for h in range(960):
+            price = 19499 if h < 200 else 25999 if h < 500 else 20999 if h < 800 else 26999
+            s.add(PriceHistory(tracker_id=tr.id, price=Decimal(price), recorded_at=start + timedelta(hours=h)))
+    points = await q.tracker_history(tr.id)
+    assert [p for _, p in points] == [19499.0, 25999.0, 20999.0, 26999.0, 26999.0]   # зміни + останній запис
+    assert points[-1][0] == fmt(start + timedelta(hours=959), "%Y-%m-%d %H:%M")      # лінія доходить до «зараз»
+    assert points[1][0] == fmt(start + timedelta(hours=200), "%Y-%m-%d %H:%M")       # момент першої зміни
 
 
 async def _user(uid: str) -> User:
