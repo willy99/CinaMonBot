@@ -52,6 +52,7 @@ class PriceEventType(StrEnum):
     INCREASE = "increase"
     RESTOCK = "restock"
     TARGET_REACHED = "target_reached"
+    ENDING = "ending"                  # нагадування: до кінця торгів N хв (аукціони)
 
 
 class NotificationStatus(StrEnum):
@@ -84,6 +85,10 @@ class User(Base, TimestampMixin):
     # Щотижневий дайджест "що подешевшало" (можна вимкнути кнопкою в самому дайджесті)
     digest_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_digest_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Посилання «мій список бажань» (/share): t.me/<бот>?start=wl_<token>. None — список не публічний
+    share_token: Mapped[str | None] = mapped_column(String(24))
+    # Звідки прийшов (позначка ?start=<джерело> у першому /start): fb, tg, linkedin, wishlist…
+    source: Mapped[str | None] = mapped_column(String(32))
 
     trackers: Mapped[list[PriceTracker]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
@@ -91,6 +96,7 @@ class User(Base, TimestampMixin):
 
     __table_args__ = (
         Index("ix_users_telegram_id", "telegram_id"),
+        Index("ix_users_share_token", "share_token", unique=True),
     )
 
     @property
@@ -148,6 +154,13 @@ class PriceTracker(Base, TimestampMixin):
     # ── Ціль у відсотках: "скажи, коли впаде на 15%" від ціни на момент додавання ──
     target_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
     baseline_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    # Напрямок цілі: None/"below" — сповістити, коли ціна впаде до цілі; "above" — коли перевищить (аукціони)
+    target_direction: Mapped[str | None] = mapped_column(String(8))
+
+    # ── Аукціони (Violity): кінець торгів і разове нагадування перед ним ──
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime)                  # UTC, оновлюється при перевірках
+    remind_before_minutes: Mapped[int | None] = mapped_column(Integer)         # 60 / 30; None — без нагадування
+    ending_notified_at: Mapped[datetime | None] = mapped_column(DateTime)      # коли нагадали (раз на лот)
 
     user: Mapped[User] = relationship(back_populates="trackers")
     price_history: Mapped[list[PriceHistory]] = relationship(

@@ -115,6 +115,45 @@ _T: dict[str, dict[str, str]] = {
     "uk": {
         # загальне
         "cancelled": "❌ Скасовано.",
+        "btn_share_list": "🎁 Поділитися списком",
+        "share_send_text": "Мій список бажань у ЦінаБот — тут видно поточні ціни",
+        "btn_share_send": "📤 Надіслати друзям",
+        "btn_share_rotate": "🔄 Нове посилання",
+        "btn_share_off": "🚫 Вимкнути",
+        "share_empty": "🎁 Список бажань порожній — спершу додай товари (/add або просто надішли посилання).",
+        "share_intro": "🎁 <b>Твій список бажань</b>\n\nПосилання: {link}\n\nХто відкриє, побачить {n} товар(ів): назви, поточні ціни й магазини — і зможе стежити за ними сам. Твої цілі та юзернейм не показуються.\n\n<i>«Нове посилання» вимкне старе. «Вимкнути» — закриє список зовсім.</i>",
+        "share_off_done": "🚫 Посилання на список вимкнено. Увімкнути знову — /share.",
+        "share_rotated_toast": "Старе посилання більше не працює",
+        "shared_invalid": "🤷 Цей список бажань більше недоступний — власник вимкнув або оновив посилання.",
+        "shared_own": "🎁 Це твій власний список бажань. Керувати посиланням — /share.",
+        "shared_empty": "🎁 У цьому списку бажань поки немає товарів.",
+        "shared_friend": "друга",
+        "shared_title": "🎁 <b>Список бажань: {name}</b>",
+        "shared_hint": "Натисни ➕ з номером, щоб стежити за товаром і отримати сповіщення, коли він подешевшає.",
+        "btn_shared_add_all": "➕ Стежити за всіма",
+        "shared_invalid_toast": "Список більше недоступний",
+        "shared_added_toast": "✅ Стежу: {title}",
+        "shared_added_paused_toast": "Додано «{title}», але він на паузі: безкоштовно до ліміту товарів. Деталі — /premium",
+        "shared_added_all": "✅ Додано: {added} · вже стежу: {dup}",
+        "bulk_busy": "⏳ Ще додаю попередній список — зачекай хвилинку.",
+        "bulk_progress": "⏳ Додаю товари: {done} з {total}…",
+        "bulk_done_title": "📥 <b>Готово</b>",
+        "bulk_added": "✅ Додано: {n}",
+        "bulk_duplicates": "♻️ Вже стежу: {n}",
+        "bulk_failed": "⚠️ Не вдалося: {n}",
+        "bulk_fail_blocked": "сайт блокує автоматичні запити",
+        "bulk_fail_not_found": "сторінка не знайдена",
+        "bulk_fail_no_price": "не знайшов ціну на сторінці",
+        "bulk_fail_forbidden": "це посилання не можна перевіряти",
+        "bulk_fail_not_url": "не схоже на посилання",
+        "bulk_fail_auction_ended": "торги вже завершились",
+        "bulk_fail_network": "сайт не відповів, спробуй пізніше",
+        "bulk_skipped": "✋ За раз додаю до {max} товарів — ще {n} не додано, надішли їх окремо.",
+        "bulk_paused": "⏳ На паузі через ліміт: {n} (безкоштовно — {limit} активних). Деталі — /premium",
+        "bulk_hint": "<i>Для цих товарів напишу про будь-яке помітне зниження ціни. Свою ціль можна поставити, додавши товар окремо через /add.</i>",
+        "bulk_file_failed": "❌ Не вдалося прочитати файл. Спробуй ще раз або встав посилання текстом.",
+        "bulk_file_empty": "🤷 У файлі не знайшов жодного посилання.",
+        "inbox_hint": "🔗 Щоб стежити за товаром, надішли посилання на нього — можна одразу кілька або файл .txt зі списком. Команди — /help.",
 
         # ціль у відсотках ("скажи, коли впаде на 15%")
         "target_percent_range": "❌ Відсоток має бути від 1 до 90: <code>15%</code>",
@@ -204,7 +243,7 @@ _T: dict[str, dict[str, str]] = {
         "add_prompt": (
             "🔗 <b>Надішли посилання на товар</b>\n\n"
             "Rozetka, OLX, Prom.ua + десятки інших магазинів (/sites).\n\n"
-            "<i>Просто встав посилання на сторінку товару</i>"
+            "<i>Просто встав посилання на сторінку товару — можна одразу кілька або файл .txt зі списком</i>"
         ),
         "not_a_url": "❌ Це не схоже на посилання. Встав URL сторінки товару (починається з http).",
         "site_needs_js": (
@@ -237,6 +276,63 @@ _T: dict[str, dict[str, str]] = {
         "already_tracked": "⚠️ Цей товар вже відстежується!",
         "added": "✅ <b>Додано!</b>\n\n📦 {title}{target}{slots}",
         "added_target": "\n🎯 Ціль: {price}",
+        # ── Аукціони (Violity): напрямок цілі й нагадування перед кінцем торгів ──
+        "btn_tdir_above": "📈 Коли ставка перевищить суму",
+        "btn_tdir_below": "📉 Коли ціна впаде нижче суми",
+        "btn_auction_no_target": "⏰ Без цілі — лише нагадати про кінець",
+        "auction_card": (
+            "🔨 <b>{title}</b>\n\n"
+            "💰 Поточна ставка: <b>{price}</b>\n"
+            "⏳ Торги до: {end}\n\n"
+            "Коли сповістити?\n"
+            "• <b>перевищить</b> — ставки піднялись вище за твою суму;\n"
+            "• <b>впаде нижче</b> — для лотів, де ціна знижується.\n\n"
+            "Перед кінцем торгів нагадаю один раз — за скільки, обереш кнопками після додавання."
+        ),
+        "auction_ended_at_add": "🔨 <b>{title}</b>\n\nТорги вже завершились (остання ціна {price}) — стежити нема за чим.",
+        "ask_target_above": (
+            "📈 Поточна ставка: <b>{price}</b>\n\n"
+            "Введи суму в {currency}, вищу за поточну (<code>500000</code>), "
+            "або на скільки відсотків має зрости ціна (<code>20%</code>)."
+        ),
+        "ask_target_below": (
+            "📉 Поточна ціна: <b>{price}</b>\n\n"
+            "Введи суму в {currency}, нижчу за поточну (<code>300000</code>), "
+            "або на скільки відсотків має впасти ціна (<code>15%</code>)."
+        ),
+        "auction_choose_direction": "Спершу обери, коли сповістити: коли ставка <b>перевищить</b> суму чи ціна <b>впаде нижче</b>.",
+        "auction_above_invalid": "❌ Сума має бути більшою за поточну ставку ({price}).",
+        "auction_below_invalid": "❌ Сума має бути меншою за поточну ціну ({price}).",
+        "added_target_above": "\n📈 Сповіщу, коли ставка перевищить {price}",
+        "added_target_below_auction": "\n📉 Сповіщу, коли ціна впаде до {price} або нижче",
+        "added_reminder": "\n\n⏰ Торги до {end}. Коли нагадати про кінець? 👇",
+        "notif_target_above": (
+            "📈 <b>Ставка перевищила твою межу!</b>\n\n"
+            "📦 {title}\n"
+            "💰 Ставка зараз: <b>{price}</b>\n"
+            "🎯 Твоя межа: {target}\n\n"
+            "🔗 <a href='{url}'>Відкрити лот</a>"
+        ),
+        "notif_ending": (
+            "⏰ <b>До кінця торгів {left}</b>\n\n"
+            "📦 {title}\n"
+            "💰 Поточна ставка: <b>{price}</b>\n"
+            "🏁 Завершення: {end}\n\n"
+            "🔗 <a href='{url}'>Відкрити лот</a>"
+        ),
+        "minutes_short": "{n} хв",
+        "reminder_60": "за 1 год",
+        "reminder_30": "за 30 хв",
+        "reminder_15": "за 15 хв",
+        "reminder_5": "за 5 хв",
+        "reminder_off": "вимкнено",
+        "rem_btn_60": "1 год",
+        "rem_btn_30": "30 хв",
+        "rem_btn_15": "15 хв",
+        "rem_btn_5": "5 хв",
+        "rem_btn_off": "🔕 Не нагадувати про кінець торгів",
+        "settings_toast_reminder": "⏰ Нагадування: {value}",
+        "list_target_above": " → 📈≥{price}",
         "added_paused": (
             "\n\n⏳ <i>Товар додано, але він на паузі (ліміт {n} активних). "
             "Купіть /premium для розблокування.</i>"
@@ -315,6 +411,7 @@ _T: dict[str, dict[str, str]] = {
             "/add — додати товар\n"
             "/list — мої товари\n"
             "/delete — видалити товар\n"
+            "/share — поділитися списком бажань\n"
             "/settings — налаштування сповіщень\n"
             "/sites — які магазини підтримую\n"
             "/premium — підписка\n"
@@ -432,6 +529,45 @@ _T: dict[str, dict[str, str]] = {
     # ── en ────────────────────────────────────────────────────────
     "en": {
         "cancelled": "❌ Cancelled.",
+        "btn_share_list": "🎁 Share my list",
+        "share_send_text": "My wishlist in ЦінаБот with current prices",
+        "btn_share_send": "📤 Send to friends",
+        "btn_share_rotate": "🔄 New link",
+        "btn_share_off": "🚫 Turn off",
+        "share_empty": "🎁 Your wishlist is empty — add items first (/add or just send a link).",
+        "share_intro": "🎁 <b>Your wishlist</b>\n\nLink: {link}\n\nAnyone who opens it sees {n} item(s): titles, current prices and shops — and can track them too. Your targets and username are not shown.\n\n<i>“New link” disables the old one. “Turn off” closes the list completely.</i>",
+        "share_off_done": "🚫 The wishlist link is off. Turn it on again with /share.",
+        "share_rotated_toast": "The old link no longer works",
+        "shared_invalid": "🤷 This wishlist is no longer available — the owner turned off or renewed the link.",
+        "shared_own": "🎁 This is your own wishlist. Manage the link with /share.",
+        "shared_empty": "🎁 This wishlist has no items yet.",
+        "shared_friend": "a friend",
+        "shared_title": "🎁 <b>Wishlist: {name}</b>",
+        "shared_hint": "Tap ➕ with a number to track an item and get notified when it gets cheaper.",
+        "btn_shared_add_all": "➕ Track all",
+        "shared_invalid_toast": "This list is no longer available",
+        "shared_added_toast": "✅ Tracking: {title}",
+        "shared_added_paused_toast": "Added “{title}”, but it’s paused: the free plan has an item limit. See /premium",
+        "shared_added_all": "✅ Added: {added} · already tracking: {dup}",
+        "bulk_busy": "⏳ Still adding your previous list — give me a minute.",
+        "bulk_progress": "⏳ Adding items: {done} of {total}…",
+        "bulk_done_title": "📥 <b>Done</b>",
+        "bulk_added": "✅ Added: {n}",
+        "bulk_duplicates": "♻️ Already tracking: {n}",
+        "bulk_failed": "⚠️ Failed: {n}",
+        "bulk_fail_blocked": "the site blocks automated requests",
+        "bulk_fail_not_found": "page not found",
+        "bulk_fail_no_price": "no price found on the page",
+        "bulk_fail_forbidden": "this link can’t be checked",
+        "bulk_fail_not_url": "doesn’t look like a link",
+        "bulk_fail_auction_ended": "bidding has already ended",
+        "bulk_fail_network": "the site didn’t respond, try later",
+        "bulk_skipped": "✋ I add up to {max} items at a time — {n} more weren’t added, send them separately.",
+        "bulk_paused": "⏳ Paused because of the limit: {n} (free plan — {limit} active). See /premium",
+        "bulk_hint": "<i>For these items I’ll message you about any noticeable price drop. To set your own target, add an item on its own with /add.</i>",
+        "bulk_file_failed": "❌ Couldn’t read the file. Try again or paste the links as text.",
+        "bulk_file_empty": "🤷 No links found in the file.",
+        "inbox_hint": "🔗 To track an item, send me its link — several at once or a .txt file with a list work too. Commands — /help.",
 
         # percent target ("tell me when it drops by 15%")
         "target_percent_range": "❌ The percent must be between 1 and 90: <code>15%</code>",
@@ -518,7 +654,7 @@ _T: dict[str, dict[str, str]] = {
         "add_prompt": (
             "🔗 <b>Send a product link</b>\n\n"
             "Rozetka, OLX, Prom.ua + dozens of other shops (/sites).\n\n"
-            "<i>Just paste the link to the product page</i>"
+            "<i>Just paste the link to the product page — several links or a .txt file with a list work too</i>"
         ),
         "not_a_url": "❌ That doesn't look like a link. Paste the product page URL (starting with http).",
         "site_needs_js": (
@@ -551,6 +687,63 @@ _T: dict[str, dict[str, str]] = {
         "already_tracked": "⚠️ You're already tracking this item!",
         "added": "✅ <b>Added!</b>\n\n📦 {title}{target}{slots}",
         "added_target": "\n🎯 Target: {price}",
+        # ── Auctions (Violity): target direction and end-of-bidding reminder ──
+        "btn_tdir_above": "📈 When the bid goes above an amount",
+        "btn_tdir_below": "📉 When the price drops below an amount",
+        "btn_auction_no_target": "⏰ No target — just remind me of the end",
+        "auction_card": (
+            "🔨 <b>{title}</b>\n\n"
+            "💰 Current bid: <b>{price}</b>\n"
+            "⏳ Bidding ends: {end}\n\n"
+            "When should I notify you?\n"
+            "• <b>goes above</b> — bids rose past your amount;\n"
+            "• <b>drops below</b> — for lots where the price goes down.\n\n"
+            "I’ll remind you once before bidding ends — you’ll pick how early with buttons after adding."
+        ),
+        "auction_ended_at_add": "🔨 <b>{title}</b>\n\nBidding has already ended (last price {price}) — nothing to track.",
+        "ask_target_above": (
+            "📈 Current bid: <b>{price}</b>\n\n"
+            "Enter an amount in {currency} above the current bid (<code>500000</code>), "
+            "or by how many percent the price should rise (<code>20%</code>)."
+        ),
+        "ask_target_below": (
+            "📉 Current price: <b>{price}</b>\n\n"
+            "Enter an amount in {currency} below the current price (<code>300000</code>), "
+            "or by how many percent the price should drop (<code>15%</code>)."
+        ),
+        "auction_choose_direction": "First choose when to notify: when the bid goes <b>above</b> an amount or the price <b>drops below</b> it.",
+        "auction_above_invalid": "❌ The amount must be higher than the current bid ({price}).",
+        "auction_below_invalid": "❌ The amount must be lower than the current price ({price}).",
+        "added_target_above": "\n📈 I’ll notify you when the bid goes above {price}",
+        "added_target_below_auction": "\n📉 I’ll notify you when the price drops to {price} or below",
+        "added_reminder": "\n\n⏰ Bidding ends {end}. When should I remind you? 👇",
+        "notif_target_above": (
+            "📈 <b>The bid went above your limit!</b>\n\n"
+            "📦 {title}\n"
+            "💰 Bid now: <b>{price}</b>\n"
+            "🎯 Your limit: {target}\n\n"
+            "🔗 <a href='{url}'>Open the lot</a>"
+        ),
+        "notif_ending": (
+            "⏰ <b>Bidding ends in {left}</b>\n\n"
+            "📦 {title}\n"
+            "💰 Current bid: <b>{price}</b>\n"
+            "🏁 Ends: {end}\n\n"
+            "🔗 <a href='{url}'>Open the lot</a>"
+        ),
+        "minutes_short": "{n} min",
+        "reminder_60": "1 h before",
+        "reminder_30": "30 min before",
+        "reminder_15": "15 min before",
+        "reminder_5": "5 min before",
+        "reminder_off": "off",
+        "rem_btn_60": "1 h",
+        "rem_btn_30": "30 min",
+        "rem_btn_15": "15 min",
+        "rem_btn_5": "5 min",
+        "rem_btn_off": "🔕 No end-of-bidding reminder",
+        "settings_toast_reminder": "⏰ Reminder: {value}",
+        "list_target_above": " → 📈≥{price}",
         "added_paused": (
             "\n\n⏳ <i>Added, but paused (limit of {n} active items). "
             "Get /premium to unlock.</i>"
@@ -625,6 +818,7 @@ _T: dict[str, dict[str, str]] = {
             "/add — add an item\n"
             "/list — my items\n"
             "/delete — delete an item\n"
+            "/share — share my wishlist\n"
             "/settings — notification settings\n"
             "/sites — supported shops\n"
             "/premium — subscription\n"
@@ -788,6 +982,7 @@ BOT_COMMANDS: dict[str, list[tuple[str, str]]] = {
         ("add", "Додати товар"),
         ("list", "Мої товари"),
         ("delete", "Видалити товар"),
+        ("share", "Поділитися списком бажань"),
         ("settings", "Налаштування сповіщень"),
         ("sites", "Підтримувані магазини"),
         ("premium", "Підписка Premium"),
@@ -800,6 +995,7 @@ BOT_COMMANDS: dict[str, list[tuple[str, str]]] = {
         ("add", "Add an item"),
         ("list", "My items"),
         ("delete", "Delete an item"),
+        ("share", "Share my wishlist"),
         ("settings", "Notification settings"),
         ("sites", "Supported shops"),
         ("premium", "Premium subscription"),

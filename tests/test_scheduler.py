@@ -665,7 +665,7 @@ def test_setup_scheduler_registers_jobs(monkeypatch):
         pc.setup_scheduler(bot)
         assert started == [True]
         jobs = {job.id: job for job in pc.scheduler.get_jobs()}
-        assert set(jobs) == {"handle_expired_premiums", "dispatch_price_checks", "prune_scrape_log", "weekly_digest",
+        assert set(jobs) == {"handle_expired_premiums", "dispatch_price_checks", "prune_scrape_log", "weekly_digest", "ending_reminders",
                              "runtime_settings_refresh"}
         refresh = jobs["runtime_settings_refresh"]                 # /settings діють у боті за ~10 с
         assert isinstance(refresh.trigger, IntervalTrigger) and refresh.trigger.interval == timedelta(seconds=10)

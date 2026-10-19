@@ -21,6 +21,8 @@ from botkit.logs import setup_logging
 from app.database.migrate import ensure_schema
 from app.database.session import close_engine
 from app.bot.handlers.main import router
+from app.bot.handlers.wishlist import router as wishlist_router
+from app.bot.handlers.inbox import router as inbox_router
 from botkit.bot.middlewares import BlockedUserMiddleware, UserRateLimitMiddleware
 from app.scheduler.price_checker import setup_scheduler, scheduler
 from app.i18n import BOT_COMMANDS, DEFAULT_LANG
@@ -102,6 +104,9 @@ async def main() -> None:
         observer.outer_middleware(blocked)
         observer.outer_middleware(limited)
     dp.include_router(router)
+    dp.include_router(wishlist_router)
+    # «Вхідний» роутер — ОСТАННІМ: ловить посилання поза командами й діалогами
+    dp.include_router(inbox_router)
 
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)

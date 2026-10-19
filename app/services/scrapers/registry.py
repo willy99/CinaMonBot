@@ -40,6 +40,9 @@ class Platform:
     # Парсити через headless Chromium (app/services/scrapers/render.py), а не httpx:
     # для магазинів, що без JS не віддають ціну або ховаються за Cloudflare. Див. scripts/probe_render_report.md
     render_js: bool = False
+    # Аукціон: ціна рухається ставками; при додаванні питаємо напрямок цілі (перевищить / впаде нижче),
+    # загальних сповіщень «ціна впала на 3%» не шлемо, нагадуємо перед кінцем торгів
+    auction: bool = False
 
 
 # Заповнено за результатами проби 2026-10-10 (scripts/probe_platforms.py, звіт у
@@ -53,6 +56,10 @@ PLATFORMS: list[Platform] = [
     Platform("rozetka.com.ua", "Rozetka", "UA", "verified", "selectors", "власний парсер + JSON-LD fallback"),
     Platform("olx.ua", "OLX", "UA", "verified", "json-ld", "власний парсер"),
     Platform("prom.ua", "Prom.ua", "UA", "verified", "selectors", "власний парсер"),
+    Platform("violity.com", "Violity", "UA", "verified", "violity-lot",
+             "власний парсер, перевірено 2026-10-19: аукціон — ціна = поточна ставка в грн (метатеги дають USD), "
+             "кінець торгів → «немає в наявності». Ціна на аукціоні росте, тож сповіщення про зниження тут рідкісні.",
+             "https://violity.com/ua/124306466-breguet-marine-chronograph-5827br-z2-5zu", auction=True),
     Platform("notino.ua", "Notino", "UA", "verified", "notino-state",
              "власний парсер, перевірено 2026-10-13: ціна варіанта (об'єм/відтінок із /p-<id>/) зі стану сторінки "
              "__APOLLO_STATE__ — JSON-LD завжди описує варіант за замовчуванням. httpx, без браузера.",

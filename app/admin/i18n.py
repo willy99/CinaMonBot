@@ -167,6 +167,7 @@ _A: dict[str, dict[str, str]] = {
         "event_target_reached": "Досягнута ціль",
         "event_restock": "Знову в наявності",
         "event_increase": "Підвищення",
+        "event_ending": "Нагадування: кінець торгів",
 
         # логін
         "login_title": "Вхід",
@@ -633,6 +634,7 @@ _A: dict[str, dict[str, str]] = {
         "event_target_reached": "Target reached",
         "event_restock": "Back in stock",
         "event_increase": "Price increase",
+        "event_ending": "Reminder: bidding ends",
 
         "login_title": "Sign in",
         "login_subtitle": "Control panel",

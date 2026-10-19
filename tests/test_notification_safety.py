@@ -219,6 +219,8 @@ LOOP_NODES = (ast.For, ast.AsyncFor, ast.While, ast.ListComp, ast.SetComp, ast.D
 # (файл, функція) → кому йде повідомлення. Новий call-site = свідоме рішення + рядок тут.
 ALLOWED_SEND_SITES: dict[tuple[str, str], str] = {
     ("app/bot/handlers/main.py", "_notify_admin_new_site"): "адмін (ADMIN_TELEGRAM_ID)",
+    # Масове додавання: ОДНЕ зведене повідомлення адміну на весь імпорт про ще не бачені домени
+    ("app/bot/bulk.py", "_notify_admin_new_sites"): "адмін (ADMIN_TELEGRAM_ID) — одне на імпорт",
     ("app/bot/handlers/main.py", "process_feedback"): "адмін (ADMIN_TELEGRAM_ID): шапка + copy_message медіа",
     ("app/bot/handlers/main.py", "cmd_reply"): "один юзер — target_id з команди адміна",
     # cmd_broadcast вимкнено (аудит 2026-10-13, N3): масової розсилки всім більше немає
@@ -231,6 +233,10 @@ ALLOWED_SEND_SITES: dict[tuple[str, str], str] = {
     # вимикається кнопкою під дайджестом або в /settings), не заблокований, і отримує рівно одне
     # повідомлення на свій telegram_id лише зі своїми трекерами. Тихий тиждень → нічого не шлеться.
     ("app/scheduler/digest.py", "send_weekly_digests"): "opt-in юзери (digest_enabled) — кожен лише свої дані на свій telegram_id",
+    # Нагадування «за годину/півгодини до кінця торгів» (аукціони): цикл по трекерам, але кожне
+    # повідомлення — власнику трекера про ЙОГО лот, разово (ending_notified_at), лише якщо нагадування
+    # увімкнене (remind_before_minutes; вимикається в налаштуваннях товару). Гарантії — tests/test_auction.py.
+    ("app/scheduler/reminders.py", "send_ending_reminders"): "власник трекера (user.telegram_id) — разово про свій лот",
     ("botkit/admin/auth.py", "start_2fa"): "адмін дашборду (admin.telegram_id)",
     ("app/admin/pages/feedback.py", "send_reply"): "один юзер — автор фідбеку (d['telegram_id'])",
 }
@@ -240,10 +246,13 @@ ALLOWED_LOOP_SEND_SITES = {
     # цикл по юзерах з digest_enabled=True: масовий шлях лише за згодою, кожному — його власні дані
     # (гарантії перевіряє tests/test_digest.py: тільки opt-in і незаблоковані, один send на юзера, свій telegram_id)
     ("app/scheduler/digest.py", "send_weekly_digests"),
+    # цикл по трекерам з настаючим кінцем торгів: кожному власнику — разове нагадування про свій лот
+    ("app/scheduler/reminders.py", "send_ending_reminders"),
 }
 # Цикли по юзерах (не по доменах) — лише дайджест (opt-in); адресат = user.telegram_id з циклу
 USER_LOOP_SEND_SITES = [
     ("app/scheduler/digest.py", "send_weekly_digests"),
+    ("app/scheduler/reminders.py", "send_ending_reminders"),
 ]
 
 
@@ -326,6 +335,7 @@ def test_single_recipient_sites_address_one_explicit_chat_id():
         ("app/scheduler/price_checker.py", "_send_notification"): ("user", "telegram_id"),
         ("app/scheduler/price_checker.py", "_pause_excess_trackers"): ("user", "telegram_id"),
         ("app/scheduler/digest.py", "send_weekly_digests"): ("user", "telegram_id"),
+        ("app/scheduler/reminders.py", "send_ending_reminders"): ("user", "telegram_id"),
         ("app/bot/handlers/main.py", "cmd_reply"): "target_id",
         ("app/bot/handlers/main.py", "cmd_activate"): "target_telegram_id",
     }

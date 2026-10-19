@@ -527,15 +527,22 @@ def hbar_chart(items: list[tuple[str, int]], color: str | None = None, height: s
 def price_history_chart(points: list[tuple[str, float]], currency: str, target: float | None = None, height: str = "260px"):
     p = palette()
     accent = p["accent"]
-    labels = [pt[0] for pt in points]
-    values = [pt[1] for pt in points]
-    opt = _base_axes(labels)
+    # Часова вісь: точки — моменти змін ціни (queries.tracker_history), тож відстань між ними
+    # має відповідати часу, а не номеру точки
+    opt = _base_axes([])
+    opt["xAxis"] = {
+        "type": "time",
+        "axisLine": {"lineStyle": {"color": p["axis"]}},
+        "axisTick": {"show": False},
+        "splitLine": {"show": False},
+        "axisLabel": {"color": p["muted"], "fontSize": 11, "hideOverlap": True},
+    }
     opt["yAxis"]["minInterval"] = None
     opt["yAxis"]["scale"] = True
-    opt["xAxis"]["axisLabel"]["formatter"] = "{value}"
+    data = [[pt[0], pt[1]] for pt in points]
     series = [{
-        "name": at("chart_price_series", currency=currency), "type": "line", "data": values, "step": "end",
-        "symbol": "circle", "symbolSize": 8, "showSymbol": len(values) <= 40,
+        "name": at("chart_price_series", currency=currency), "type": "line", "data": data, "step": "end",
+        "symbol": "circle", "symbolSize": 8, "showSymbol": len(data) <= 40,
         "lineStyle": {"width": 2, "color": accent},
         "itemStyle": {"color": accent, "borderColor": p["surface"], "borderWidth": 2},
         "areaStyle": {"color": accent, "opacity": 0.10},
@@ -544,7 +551,9 @@ def price_history_chart(points: list[tuple[str, float]], currency: str, target: 
         series[0]["markLine"] = {
             "silent": True, "symbol": "none",
             "lineStyle": {"color": STATUS["warning"], "type": "dashed", "width": 1},
-            "label": {"color": p["ink2"], "fontSize": 11, "formatter": at("chart_target", target=f"{target:g}")},
+            # insideEndTop — підпис над лінією всередині графіка, а не за правим краєм (обрізався)
+            "label": {"color": p["ink2"], "fontSize": 11, "position": "insideEndTop",
+                      "formatter": at("chart_target", target=f"{target:g}")},
             "data": [{"yAxis": target}],
         }
     opt.update({"tooltip": _tooltip(), "series": series})

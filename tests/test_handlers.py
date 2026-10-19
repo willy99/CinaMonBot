@@ -730,7 +730,7 @@ async def test_list_free_user_within_limit(db):
     assert "⏳" not in text and "на паузі" not in text
     assert "Ваш план: Безкоштовний" in text and "Активно: 2/2 товарів" in text
     assert "Деякі товари призупинені" not in text
-    assert sent[0].callbacks == ["add_tracker", "delete_menu", "settings_menu", "premium_info"]
+    assert sent[0].callbacks == ["add_tracker", "delete_menu", "settings_menu", "share_menu", "premium_info"]
 
 
 async def test_list_free_user_beyond_limit_marks_paused(db):
@@ -760,7 +760,7 @@ async def test_list_premium_user(db):
     assert "⏳" not in text and "paused" not in text
     assert f"{LIMIT + 2}. ✅ <b>{trackers[-1].title}</b>" in text
     assert "Your plan: Premium (unlimited)" in text
-    assert sent[0].callbacks == ["add_tracker", "delete_menu", "settings_menu"]
+    assert sent[0].callbacks == ["add_tracker", "delete_menu", "settings_menu", "share_menu"]
 
 
 async def test_list_manually_paused_tracker_shown_after_active(db):
