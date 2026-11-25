@@ -2,18 +2,19 @@
 Зовнішня перевірка живучості — окремим процесом, тож працює й тоді, коли бот упав чи завис.
 
 Кожні 5 хв (pm2 «<проєкт>-health»): heartbeat планувальника з бази (+ /v1/health API, якщо API_HEALTH_URL).
-  - усе добре → пінг HEALTHCHECK_PING_URL (healthchecks.io / Uptime Kuma push), якщо задано;
-  - погано → healthchecks.io: POST <url>/fail з переліком проблем; Uptime Kuma (…/api/push/<token>?status=up…):
-    той самий URL зі status=down&msg=<проблеми> (22.10: «/fail» у кінці Kuma-URL давав ping=/fail при status=up);
-  - монітор недоступний (немає мережі) — лише попередження в лозі: монітор сам побачить тишу.
+  - усе добре → пінг HEALTHCHECK_PING_URL, якщо задано;
+  - погано → пінг зі статусом «збій» і текстом проблем. Формат — за адресою:
+      Uptime Kuma (…/api/push/<token>) → GET ?status=up|down&msg=…
+        (адресу можна вставити з Kuma як є — ?status=up&msg=OK&ping= замінюємо своїми);
+      healthchecks.io та сумісні        → GET <url> / POST <url>/fail з текстом у тілі;
+  - монітор недоступний (немає мережі, tailnet лежить) — лише попередження в лозі: монітор сам побачить тишу.
 Результат — у лозі (logs/ops.out.log). У Telegram нічого не шле: 14.10 технічні тривоги адміну прибрано на
-прохання власника (спам «планувальник не тікав» / «на паузі вже N-й раз»). Хочете сповіщень — задайте
-HEALTHCHECK_PING_URL, і хай про збої повідомляє зовнішній моніторинг. Свіжий старт бота (ще жодного тіку) — не проблема.
+прохання власника (спам «планувальник не тікав» / «на паузі вже N-й раз») — про збої повідомляє зовнішній
+моніторинг (Kuma). Свіжий старт бота (ще жодного тіку) — не проблема.
 """
 from __future__ import annotations
 
 import asyncio
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 import structlog
@@ -22,6 +23,7 @@ from botkit.context import ctx
 from botkit.ops import heartbeat
 
 logger = structlog.get_logger(__name__)
+KUMA_MSG_LIMIT = 250          # Kuma показує msg у дашборді й у сповіщенні — коротко
 
 
 async def _problems(client: httpx.AsyncClient) -> list[str]:
@@ -43,26 +45,22 @@ async def _problems(client: httpx.AsyncClient) -> list[str]:
     return problems
 
 
-def _is_kuma(ping: str) -> bool:
-    return "/api/push/" in urlsplit(ping).path
+def _is_kuma(url: str) -> bool:
+    return "/api/push/" in url
 
 
-def _kuma_down_url(ping: str, problems: list[str]) -> str:
-    """Kuma push-URL зі status=down і msg=<проблеми> (решта параметрів — як були)."""
-    parts = urlsplit(ping)
-    query = dict(parse_qsl(parts.query, keep_blank_values=True))
-    query.update(status="down", msg="; ".join(problems)[:250])
-    return urlunsplit(parts._replace(query=urlencode(query)))
-
-
-async def _ping(client: httpx.AsyncClient, ping: str, problems: list[str]) -> None:
+async def _ping(client: httpx.AsyncClient, url: str, problems: list[str]) -> None:
+    """Зовнішній монітор: «живий» або «збій» з текстом. Недоступний монітор не ламає перевірку."""
     try:
-        if not problems:
-            await client.get(ping, timeout=10)
-        elif _is_kuma(ping):
-            await client.get(_kuma_down_url(ping, problems), timeout=10)
+        if _is_kuma(url):
+            base = url.split("?", 1)[0]          # з Kuma копіюють адресу разом із ?status=up&msg=OK&ping=
+            params = {"status": "down", "msg": "; ".join(problems)[:KUMA_MSG_LIMIT]} if problems \
+                else {"status": "up", "msg": "OK"}
+            await client.get(base, params=params, timeout=10)
+        elif problems:
+            await client.post(url.rstrip("/") + "/fail", content="\n".join(problems), timeout=10)
         else:
-            await client.post(ping.rstrip("/") + "/fail", content="\n".join(problems), timeout=10)
+            await client.get(url, timeout=10)
     except httpx.HTTPError as e:
         logger.warning("health_ping_failed", error=type(e).__name__)
 

@@ -8,8 +8,10 @@ import sqlite3
 import time
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
+from urllib.parse import unquote_plus
 
 import httpx
+import pytest
 
 from botkit.admin import auth
 from botkit.admin import queries as q
@@ -90,35 +92,42 @@ async def test_healthcheck_never_messages_telegram(kit, monkeypatch):
     assert rec.calls[-1][:2] == ("GET", "https://hc-ping.example/uuid")
 
 
-async def test_healthcheck_reports_down_to_uptime_kuma(kit, monkeypatch):
-    """22.10: push-URL Kuma «…/api/push/<t>?status=up&msg=OK&ping=» + «/fail» давав ping=/fail при status=up —
-    Kuma бачила «up» навіть тоді, коли ми повідомляли про збій. Для Kuma — той самий URL зі status=down."""
-    from urllib.parse import parse_qs, urlsplit
-    kuma = "http://healthcheck:3001/api/push/TOKEN?status=up&msg=OK&ping="
-    monkeypatch.setattr(kit.settings, "HEALTHCHECK_PING_URL", kuma)
+@pytest.mark.parametrize("url, ok_call, fail_call", [
+    # Uptime Kuma: адресу копіюють разом із ?status=up&msg=OK&ping= — параметри замінюємо своїми
+    ("http://healthcheck:3001/api/push/AbC123?status=up&msg=OK&ping=",
+     ("GET", "http://healthcheck:3001/api/push/AbC123?status=up&msg=OK"),
+     ("GET", "http://healthcheck:3001/api/push/AbC123?status=down&msg=")),
+    ("https://hc-ping.example/uuid",
+     ("GET", "https://hc-ping.example/uuid"),
+     ("POST", "https://hc-ping.example/uuid/fail")),
+])
+async def test_healthcheck_ping_formats(kit, monkeypatch, url, ok_call, fail_call):
+    """22.10: Kuma-URL + «/fail» давав ping=/fail при status=up — Kuma бачила «up» навіть під час збою."""
+    monkeypatch.setattr(kit.settings, "HEALTHCHECK_PING_URL", url)
     rec = _Rec()
-    async with kit.get_session() as s:
-        s.add(kit.models.Heartbeat(name="scheduler", at=datetime.utcnow() - timedelta(hours=1)))
-    async with rec.client() as c:
-        assert await hc.check(c)
-    method, url, _ = rec.calls[-1]
-    parts = urlsplit(url)
-    assert method == "GET" and parts.path == "/api/push/TOKEN"
-    q = parse_qs(parts.query, keep_blank_values=True)
-    assert q["status"] == ["down"] and "не тікав" in q["msg"][0] and q["ping"] == [""]
-
     await heartbeat.beat(heartbeat.SCHEDULER)
     async with rec.client() as c:
-        assert await hc.check(c) == []
-    assert rec.calls[-1][:2] == ("GET", kuma)                       # усе добре — status=up як є
+        await hc.check(c)
+    assert rec.calls[-1][:2] == ok_call
+    async with kit.get_session() as s:
+        (await s.get(kit.models.Heartbeat, "scheduler")).at = datetime.utcnow() - timedelta(minutes=30)
+    async with rec.client() as c:
+        await hc.check(c)
+    method, sent_url, body = rec.calls[-1]
+    assert method == fail_call[0] and sent_url.startswith(fail_call[1])
+    text = unquote_plus(sent_url) + body
+    assert "планувальник бота не тікав" in text
 
 
 async def test_healthcheck_survives_unreachable_monitor(kit, monkeypatch):
-    """Немає мережі — пінг не доходить; перевірка не падає (монітор сам побачить тишу)."""
-    monkeypatch.setattr(kit.settings, "HEALTHCHECK_PING_URL", "http://healthcheck:3001/api/push/T?status=up&msg=OK&ping=")
+    """Монітор лежить / tailnet недоступний (немає мережі) — перевірка не падає, монітор сам побачить тишу."""
+    monkeypatch.setattr(kit.settings, "HEALTHCHECK_PING_URL", "http://healthcheck:3001/api/push/x")
 
     def handler(req):
-        raise httpx.ConnectTimeout("timed out", request=req)
+        if "healthcheck" in str(req.url):
+            raise httpx.ConnectError("no route", request=req)
+        return httpx.Response(200, json={"ok": True})
+    await heartbeat.beat(heartbeat.SCHEDULER)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
         assert await hc.check(c) == []
 
