@@ -91,11 +91,15 @@ async def test_login_lockout_message(db, user, monkeypatch):
     await user.open("/login")
     user.find("Логін").type("tester")
     for i in range(2):
+        # The error text from the previous attempt stays on the page: clear it so should_see waits for the
+        # handler of THIS attempt to finish (on a slow CPU it could otherwise overwrite the lockout message).
+        for label in user.find(kind=ui.label).elements:
+            if label.text.startswith("Невірний логін"):
+                label.text = ""
         user.find("Пароль").clear()
         user.find("Пароль").type("wrong-password-1")
         user.find("Увійти").click()
         await user.should_see("Невірний логін або пароль", retries=20)
-        # текст помилки лишається з попередньої спроби — чекаємо саме на реєстрацію невдачі
         await wait_until(lambda: any(a.locked_until or a.failures == i + 1 for a in auth._attempts.values()),
                          what=f"невдала спроба {i + 1} зареєстрована")
     # після блокування навіть правильний пароль не пускає
