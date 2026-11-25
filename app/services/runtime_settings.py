@@ -16,9 +16,12 @@ from botkit.runtime_settings import Spec
 EDITABLE_SPECS: dict[str, Spec] = {
     "FREE_TIER_CHECK_INTERVAL_MINUTES": Spec(int, 30, 1440, "monitoring", "unit_minutes"),
     "PREMIUM_CHECK_INTERVAL_MINUTES": Spec(int, 10, 720, "monitoring", "unit_minutes"),
+    "AUCTION_END_WINDOW_MINUTES": Spec(int, 5, 120, "monitoring", "unit_minutes"),
+    "AUCTION_END_INTERVAL_MINUTES": Spec(int, 1, 30, "monitoring", "unit_minutes"),
     "RESTOCK_COOLDOWN_DAYS": Spec(int, 0, 60, "monitoring", "unit_days"),
     "SCRAPE_DELAY_SECONDS": Spec(float, 0.5, 30, "scraping", "unit_seconds"),
     "SCRAPE_MAX_RETRIES": Spec(int, 1, 5, "scraping", ""),
+    "DOMAIN_MAX_CHECKS_PER_MINUTE": Spec(int, 1, 60, "scraping", ""),
     "FREE_TIER_MAX_ITEMS": Spec(int, 1, 100, "plans", ""),
     "PREMIUM_PRICE_UAH": Spec(int, 1, 10000, "plans", "unit_uah"),
 }

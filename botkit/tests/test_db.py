@@ -90,6 +90,39 @@ async def test_healthcheck_never_messages_telegram(kit, monkeypatch):
     assert rec.calls[-1][:2] == ("GET", "https://hc-ping.example/uuid")
 
 
+async def test_healthcheck_reports_down_to_uptime_kuma(kit, monkeypatch):
+    """22.10: push-URL Kuma «…/api/push/<t>?status=up&msg=OK&ping=» + «/fail» давав ping=/fail при status=up —
+    Kuma бачила «up» навіть тоді, коли ми повідомляли про збій. Для Kuma — той самий URL зі status=down."""
+    from urllib.parse import parse_qs, urlsplit
+    kuma = "http://healthcheck:3001/api/push/TOKEN?status=up&msg=OK&ping="
+    monkeypatch.setattr(kit.settings, "HEALTHCHECK_PING_URL", kuma)
+    rec = _Rec()
+    async with kit.get_session() as s:
+        s.add(kit.models.Heartbeat(name="scheduler", at=datetime.utcnow() - timedelta(hours=1)))
+    async with rec.client() as c:
+        assert await hc.check(c)
+    method, url, _ = rec.calls[-1]
+    parts = urlsplit(url)
+    assert method == "GET" and parts.path == "/api/push/TOKEN"
+    q = parse_qs(parts.query, keep_blank_values=True)
+    assert q["status"] == ["down"] and "не тікав" in q["msg"][0] and q["ping"] == [""]
+
+    await heartbeat.beat(heartbeat.SCHEDULER)
+    async with rec.client() as c:
+        assert await hc.check(c) == []
+    assert rec.calls[-1][:2] == ("GET", kuma)                       # усе добре — status=up як є
+
+
+async def test_healthcheck_survives_unreachable_monitor(kit, monkeypatch):
+    """Немає мережі — пінг не доходить; перевірка не падає (монітор сам побачить тишу)."""
+    monkeypatch.setattr(kit.settings, "HEALTHCHECK_PING_URL", "http://healthcheck:3001/api/push/T?status=up&msg=OK&ping=")
+
+    def handler(req):
+        raise httpx.ConnectTimeout("timed out", request=req)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+        assert await hc.check(c) == []
+
+
 async def test_backup_restorable_and_pruned(kit):
     async with kit.get_session() as s:
         s.add(kit.models.User(telegram_id=555))

@@ -162,7 +162,6 @@ _T: dict[str, dict[str, str]] = {
             "Введи суму числом: <code>4500</code>"
         ),
         "added_target_percent": "\n🎯 Ціль: −{pct} % (≤ {price})",
-        "list_target_percent": " → 🎯−{pct}%",
         "notif_target_percent": (
             "🎯 <b>Ціна впала на {pct} % — твоя ціль досягнута!</b>\n\n"
             "📦 {title}\n"
@@ -332,7 +331,6 @@ _T: dict[str, dict[str, str]] = {
         "rem_btn_5": "5 хв",
         "rem_btn_off": "🔕 Не нагадувати про кінець торгів",
         "settings_toast_reminder": "⏰ Нагадування: {value}",
-        "list_target_above": " → 📈≥{price}",
         "added_paused": (
             "\n\n⏳ <i>Товар додано, але він на паузі (ліміт {n} активних). "
             "Купіть /premium для розблокування.</i>"
@@ -522,6 +520,62 @@ _T: dict[str, dict[str, str]] = {
         ),
         "toggle_drop": "Про зниження ціни",
         "toggle_restock": "Про наявність",
+        "toggle_increase": "Про підвищення ціни",
+        "btn_mute_increase": "🔕 Не сповіщати про подорожчання",
+        "mute_toast_increase": "🔕 Про подорожчання цього товару більше не сповіщатиму",
+        "unmute_toast_increase": "🔔 Сповіщення про подорожчання увімкнено",
+        "notif_increase": (
+            "📈 <b>Ціна зросла на {pct}%</b>\n\n"
+            "📦 {title}\n"
+            "💰 Було: {old}\n"
+            "💸 Стало: <b>{new}</b> (+{diff})\n\n"
+            "🔗 <a href='{url}'>Перейти до товару</a>"
+        ),
+        "notif_increase_auction": (
+            "📈 <b>Ставка зросла на {pct}%</b>\n\n"
+            "📦 {title}\n"
+            "💰 Була: {old}\n"
+            "🔨 Зараз: <b>{new}</b> (+{diff})\n\n"
+            "🔗 <a href='{url}'>Відкрити лот</a>"
+        ),
+        # /list: чого чекаємо по товару
+        "list_expect_below": "🎯 Чекаю: ціна ≤ {price}",
+        "list_expect_percent": "🎯 Чекаю: −{pct}% (ціна ≤ {price})",
+        "list_expect_above": "📈 Чекаю: ставка ≥ {price}",
+        "list_expect_lot": "👀 Ціль не задана — лише стежу за лотом",
+        "list_expect_drop": "📉 Чекаю: знижку від 3% (ціль не задана)",
+        "list_expect_increase": "📈 подорожчання від 3%",
+        "list_expect_increase_only": "📈 Чекаю: подорожчання від 3%",
+        "list_expect_muted": "🔕 Сповіщення про ціну вимкнені",
+        "list_auction_until": "🔨 Торги до {end}",
+        "list_auction_remind": "⏰ нагадаю {value}",
+        "list_auction_ended": "🏁 Торги завершено",
+        "list_lot_sold": "🏁 Лот продано",
+        "list_lot_unsold": "🏁 Торги завершено, лот не продано",
+        "list_paused_domain": "🚫 Магазин зараз блокує перевірки — позиція на паузі",
+        "list_error": "⚠️ Не вдається перевірити — перевірки зупинено",
+        # Нова межа / ціль з-під «ціль досягнута»
+        "btn_new_target_above": "🎯 Нова межа ставки",
+        "btn_new_target_below": "🎯 Нова ціль",
+        "ask_new_target_above": (
+            "📈 <b>{title}</b>\n"
+            "💰 Ставка зараз: <b>{price}</b>\n"
+            "🎯 Межа була: {target}\n\n"
+            "Напиши нову межу — суму (<code>5000</code>) або на скільки відсотків вище поточної ставки "
+            "(<code>20%</code>). Сповіщу, коли ставка її перевищить."
+        ),
+        "ask_new_target_below": (
+            "🎯 <b>{title}</b>\n"
+            "💰 Ціна зараз: <b>{price}</b>\n"
+            "🎯 Ціль була: {target}\n\n"
+            "Напиши нову ціль — суму (<code>4500</code>) або знижку у відсотках від поточної ціни "
+            "(<code>15%</code>). Сповіщу, коли ціна впаде до неї."
+        ),
+        "new_target_saved_above": "✅ Нова межа: сповіщу, коли ставка перевищить {price}",
+        "new_target_saved_below": "✅ Нова ціль: сповіщу, коли ціна впаде до {price}",
+        "new_target_ended": "🏁 Торги вже завершено — нову межу ставити нема для чого.",
+        "list_out_of_stock": "❌ Немає в наявності — скажу, коли з'явиться",
+        "list_out_of_stock_muted": "❌ Немає в наявності",
         "settings_toast_on": "🔔 Увімкнено",
         "settings_toast_off": "🔕 Вимкнено",
     },
@@ -576,7 +630,6 @@ _T: dict[str, dict[str, str]] = {
             "Enter an amount instead: <code>4500</code>"
         ),
         "added_target_percent": "\n🎯 Target: −{pct} % (≤ {price})",
-        "list_target_percent": " → 🎯−{pct}%",
         "notif_target_percent": (
             "🎯 <b>Price dropped by {pct} % — your target is reached!</b>\n\n"
             "📦 {title}\n"
@@ -743,7 +796,6 @@ _T: dict[str, dict[str, str]] = {
         "rem_btn_5": "5 min",
         "rem_btn_off": "🔕 No end-of-bidding reminder",
         "settings_toast_reminder": "⏰ Reminder: {value}",
-        "list_target_above": " → 📈≥{price}",
         "added_paused": (
             "\n\n⏳ <i>Added, but paused (limit of {n} active items). "
             "Get /premium to unlock.</i>"
@@ -926,6 +978,62 @@ _T: dict[str, dict[str, str]] = {
         ),
         "toggle_drop": "Price drops",
         "toggle_restock": "Back in stock",
+        "toggle_increase": "Price increases",
+        "btn_mute_increase": "🔕 Don't notify about price increases",
+        "mute_toast_increase": "🔕 No more price-increase alerts for this item",
+        "unmute_toast_increase": "🔔 Price-increase alerts are back on",
+        "notif_increase": (
+            "📈 <b>Price went up by {pct}%</b>\n\n"
+            "📦 {title}\n"
+            "💰 Was: {old}\n"
+            "💸 Now: <b>{new}</b> (+{diff})\n\n"
+            "🔗 <a href='{url}'>Open product</a>"
+        ),
+        "notif_increase_auction": (
+            "📈 <b>The bid went up by {pct}%</b>\n\n"
+            "📦 {title}\n"
+            "💰 Was: {old}\n"
+            "🔨 Now: <b>{new}</b> (+{diff})\n\n"
+            "🔗 <a href='{url}'>Open the lot</a>"
+        ),
+        # /list: what we're waiting for
+        "list_expect_below": "🎯 Waiting for: price ≤ {price}",
+        "list_expect_percent": "🎯 Waiting for: −{pct}% (price ≤ {price})",
+        "list_expect_above": "📈 Waiting for: bid ≥ {price}",
+        "list_expect_lot": "👀 No target — just watching the lot",
+        "list_expect_drop": "📉 Waiting for: a drop of 3%+ (no target)",
+        "list_expect_increase": "📈 a rise of 3%+",
+        "list_expect_increase_only": "📈 Waiting for: a rise of 3%+",
+        "list_expect_muted": "🔕 Price alerts are off",
+        "list_auction_until": "🔨 Bidding ends {end}",
+        "list_auction_remind": "⏰ reminder {value}",
+        "list_auction_ended": "🏁 Bidding has ended",
+        "list_lot_sold": "🏁 Lot sold",
+        "list_lot_unsold": "🏁 Bidding ended — lot not sold",
+        "list_paused_domain": "🚫 The shop is blocking checks — item paused",
+        "list_error": "⚠️ Can't check this page — checks stopped",
+        # New limit / target from under "target reached"
+        "btn_new_target_above": "🎯 New bid limit",
+        "btn_new_target_below": "🎯 New target",
+        "ask_new_target_above": (
+            "📈 <b>{title}</b>\n"
+            "💰 Bid now: <b>{price}</b>\n"
+            "🎯 Limit was: {target}\n\n"
+            "Send a new limit — an amount (<code>5000</code>) or how many percent above the current bid "
+            "(<code>20%</code>). I'll tell you when the bid goes above it."
+        ),
+        "ask_new_target_below": (
+            "🎯 <b>{title}</b>\n"
+            "💰 Price now: <b>{price}</b>\n"
+            "🎯 Target was: {target}\n\n"
+            "Send a new target — an amount (<code>4500</code>) or a discount in percent from the current price "
+            "(<code>15%</code>). I'll tell you when the price drops to it."
+        ),
+        "new_target_saved_above": "✅ New limit: I'll tell you when the bid goes above {price}",
+        "new_target_saved_below": "✅ New target: I'll tell you when the price drops to {price}",
+        "new_target_ended": "🏁 Bidding has already ended — no point setting a new limit.",
+        "list_out_of_stock": "❌ Out of stock — I'll tell you when it's back",
+        "list_out_of_stock_muted": "❌ Out of stock",
         "settings_toast_on": "🔔 Enabled",
         "settings_toast_off": "🔕 Disabled",
     },

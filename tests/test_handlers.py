@@ -723,12 +723,12 @@ async def test_list_free_user_within_limit(db):
     with capture_bot() as sent:
         await h.cmd_list_msg(make_message(1, "/list", "uk"))
     text = sent[0].text
-    assert "Твої товари (2)" in text
-    assert "1. ✅ <b>Перший</b>" in text and "💰 1 234,50 грн → 🎯1 000 грн" in text
-    assert "2. ✅ <b>Без назви</b>" in text and "💰 —" in text
-    assert "Помилковий" not in text
+    assert "Твої товари (3)" in text                       # з 20.10 позиції з помилкою теж видно — в кінці
+    assert "1. ✅ <b>Перший</b>\n   💰 1 234,50 грн · <a href='https://a.example/p/1'>a.example</a>\n   🎯 Чекаю: ціна ≤ 1 000 грн" in text
+    assert "2. ✅ <b>Без назви</b>\n   💰 — · <a href='https://a.example/p/2'>a.example</a>\n   📉 Чекаю: знижку від 3% (ціль не задана)" in text
+    assert "3. ⚠️ <b>Помилковий</b>" in text and "⚠️ Не вдається перевірити — перевірки зупинено" in text
     assert "⏳" not in text and "на паузі" not in text
-    assert "Ваш план: Безкоштовний" in text and "Активно: 2/2 товарів" in text
+    assert "Ваш план: Безкоштовний" in text and "Активно: 2/3 товарів" in text
     assert "Деякі товари призупинені" not in text
     assert sent[0].callbacks == ["add_tracker", "delete_menu", "settings_menu", "share_menu", "premium_info"]
 

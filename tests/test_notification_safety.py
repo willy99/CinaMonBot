@@ -227,7 +227,6 @@ ALLOWED_SEND_SITES: dict[tuple[str, str], str] = {
     ("app/bot/handlers/main.py", "cmd_pay_premium"): "адмін (ADMIN_TELEGRAM_ID)",
     ("app/bot/handlers/main.py", "cmd_activate"): "один юзер — target_telegram_id з команди адміна",
     ("app/scheduler/price_checker.py", "_pause_excess_trackers"): "один юзер — власник трекерів (user.telegram_id)",
-    ("app/scheduler/price_checker.py", "_check_domain_health"): "адмін (admin_id) — цикл по доменах, не по юзерах",
     ("app/scheduler/price_checker.py", "_send_notification"): "один юзер — власник трекера (tracker.user_id)",
     # Щотижневий дайджест: цикл по юзерах, але КОЖЕН із них явно підписаний (User.digest_enabled=True,
     # вимикається кнопкою під дайджестом або в /settings), не заблокований, і отримує рівно одне
@@ -242,7 +241,6 @@ ALLOWED_SEND_SITES: dict[tuple[str, str], str] = {
 }
 # Відправка всередині циклу/comprehension дозволена лише тут
 ALLOWED_LOOP_SEND_SITES = {
-    ("app/scheduler/price_checker.py", "_check_domain_health"),  # цикл по доменах, адресат завжди admin_id
     # цикл по юзерах з digest_enabled=True: масовий шлях лише за згодою, кожному — його власні дані
     # (гарантії перевіряє tests/test_digest.py: тільки opt-in і незаблоковані, один send на юзера, свій telegram_id)
     ("app/scheduler/digest.py", "send_weekly_digests"),
@@ -306,14 +304,9 @@ def test_only_allowed_sends_inside_loops():
     in_loop = {key for key, calls in sites.items() if any(flag for flag, _ in calls)}
     assert in_loop == ALLOWED_LOOP_SEND_SITES, f"відправка в циклі поза дозволеними: {sorted(in_loop - ALLOWED_LOOP_SEND_SITES)}"
 
-    # _check_domain_health: адресат — літерально admin_id, не юзер
-    for _, call in sites[("app/scheduler/price_checker.py", "_check_domain_health")]:
-        chat = _kw(call, "chat_id")
-        assert isinstance(chat, ast.Name) and chat.id == "admin_id"
-
-    # Цикл по юзерах — лише дайджест (opt-in). /broadcast вимкнено (N3). Інших немає.
-    user_loops = sorted(key for key in in_loop if key != ("app/scheduler/price_checker.py", "_check_domain_health"))
-    assert user_loops == sorted(USER_LOOP_SEND_SITES)
+    # Цикл по юзерах — лише дайджест (opt-in). /broadcast вимкнено (N3). Алерт адміну про домени
+    # (_check_domain_health) прибрано 19.10 — замість нього domain_blocks без повідомлень. Інших немає.
+    assert sorted(in_loop) == sorted(USER_LOOP_SEND_SITES)
 
     # send_weekly_digests: рівно один send_message, адресат — user.telegram_id з циклу по opt-in юзерах,
     # і сам запит юзерів фільтрує digest_enabled + is_blocked (статично, щоб фільтр не зник непомітно)
@@ -405,8 +398,12 @@ async def test_notification_has_contextual_mute_button(db, event, kind):
     markup = bot.send_message.await_args.kwargs["reply_markup"]
     callbacks = [b.callback_data for row in markup.inline_keyboard for b in row]
     texts = [b.text for row in markup.inline_keyboard for b in row]
-    assert callbacks == [f"mute:{kind}:{tr.id}", f"tsettings:{tr.id}"]
-    assert texts == [t("uk", "btn_mute_restock" if kind == "restock" else "btn_mute_drop"), t("uk", "btn_tracker_settings")]
+    # «ціль досягнута» — ще й «🎯 Нова ціль» (newtarget:), щоб одразу задати наступну
+    retarget = [f"newtarget:{tr.id}"] if event == PriceEventType.TARGET_REACHED else []
+    assert callbacks == [f"mute:{kind}:{tr.id}", *retarget, f"tsettings:{tr.id}"]
+    mute_text = t("uk", "btn_mute_restock" if kind == "restock" else "btn_mute_drop")
+    retarget_text = [t("uk", "btn_new_target_below")] if retarget else []
+    assert texts == [mute_text, *retarget_text, t("uk", "btn_tracker_settings")]
 
 
 # ─── (e) Прапорці і кулдаун придушують відправку, рядків Notification немає ──
@@ -677,9 +674,11 @@ async def test_tracker_settings_view_and_toggles(db):
     view = sent[0]
     assert view.kind == "edit"
     assert "Навушники &lt;X&gt;" in view.text and "1 500 грн" in view.text
-    assert view.callbacks == [f"ttoggle:drop:{tr.id}", f"ttoggle:restock:{tr.id}", "settings_menu", f"del:{tr.id}"]
-    assert view.buttons[:2] == [f"✅ {t('uk', 'toggle_drop')}", f"✅ {t('uk', 'toggle_restock')}"]
-    assert view.buttons[2:] == [t("uk", "btn_back"), t("uk", "btn_delete")]
+    assert view.callbacks == [f"ttoggle:drop:{tr.id}", f"ttoggle:increase:{tr.id}", f"ttoggle:restock:{tr.id}",
+                              "settings_menu", f"del:{tr.id}"]
+    assert view.buttons[:3] == [f"✅ {t('uk', 'toggle_drop')}", f"☐ {t('uk', 'toggle_increase')}",
+                                f"✅ {t('uk', 'toggle_restock')}"]                 # подорожчання — opt-in
+    assert view.buttons[3:] == [t("uk", "btn_back"), t("uk", "btn_delete")]
 
     with capture_bot() as sent:
         await h.toggle_tracker_setting(make_callback(510, f"ttoggle:drop:{tr.id}"))
@@ -690,7 +689,7 @@ async def test_tracker_settings_view_and_toggles(db):
     with capture_bot() as sent:
         await h.toggle_tracker_setting(make_callback(510, f"ttoggle:restock:{tr.id}"))
     assert await _flags(tr.id) == (False, False)
-    assert sent[0].buttons[:2] == [f"☐ {t('uk', 'toggle_drop')}", f"☐ {t('uk', 'toggle_restock')}"]
+    assert [sent[0].buttons[0], sent[0].buttons[2]] == [f"☐ {t('uk', 'toggle_drop')}", f"☐ {t('uk', 'toggle_restock')}"]
 
     with capture_bot() as sent:
         await h.toggle_tracker_setting(make_callback(510, f"ttoggle:drop:{tr.id}"))

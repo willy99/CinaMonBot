@@ -63,9 +63,10 @@ def _reset():
     # «перевищить»: перетин знизу вгору — завжди; уже за межею — лише якщо ще не сповіщали
     (D(900), D(1000), D(1000), "above", True, PriceEventType.TARGET_REACHED),
     (None, D(1200), D(1000), "above", False, PriceEventType.TARGET_REACHED),
-    (D(1100), D(1200), D(1000), "above", True, None),          # уже сповіщали — не повторюємо
+    (D(1100), D(1200), D(1000), "above", True, PriceEventType.INCREASE),  # ціль не повторюємо; +9% — подорожчання (opt-in)
     (D(1100), D(1200), D(1000), "above", False, PriceEventType.TARGET_REACHED),
-    (D(900), D(950), D(1000), "above", False, None),
+    (D(900), D(950), D(1000), "above", False, PriceEventType.INCREASE),  # межу не досягли; +5,6% — подорожчання (opt-in)
+    (D(900), D(920), D(1000), "above", False, None),           # +2,2% — не подія
     (D(1000), D(500), D(2000), "above", False, None),         # падіння для «перевищить» — не подія
     # «впаде нижче» / звичайна ціль
     (D(1100), D(1000), D(1000), "below", True, PriceEventType.TARGET_REACHED),
@@ -350,4 +351,85 @@ async def test_shop_settings_have_no_reminder_row(db):
 async def test_list_shows_above_target(db):
     user = await seed_user(1)
     tr = await seed_lot(user, target="5000", direction="above")
-    assert h.list_target_text(tr, "uk") == " → 📈≥5 000 грн"
+    assert h.list_item_lines(tr, "uk")[-1] == "📈 Чекаю: ставка ≥ 5 000 грн"
+
+
+# ─── Результат торгів: продано → пауза, не продано → стежимо далі ─
+
+def ended_lot(outcome: str | None, price: str = "220") -> ProductData:
+    return ProductData(title="ЖД Вагон", price=D(price), old_price=None, currency="UAH", is_available=False,
+                       image_url=None, canonical_url=LOT, strategy="violity-lot",
+                       ends_at=datetime.now(timezone.utc) - timedelta(minutes=5), lot_outcome=outcome)
+
+
+async def test_sold_lot_is_paused_on_scheduled_check(db, monkeypatch):
+    user = await seed_user(1)
+    tr = await seed_lot(user, price="200", ends_at=datetime.utcnow() + timedelta(minutes=1))
+    patch_scrape(monkeypatch, ended_lot("sold"))
+    await pc.check_single_price(tr, make_bot())
+    fresh = await load_tracker(tr.id)
+    assert fresh.status == TrackerStatus.PAUSED and fresh.lot_outcome == "sold"
+    assert h.list_item_lines(fresh, "uk")[1:] == ["🏁 Лот продано"]
+    assert h.list_item_lines(fresh, "en")[1:] == ["🏁 Lot sold"]
+
+
+async def test_unsold_lot_stays_active_and_relist_clears_outcome(db, monkeypatch):
+    user = await seed_user(1)
+    tr = await seed_lot(user, price="200", ends_at=datetime.utcnow() + timedelta(minutes=1))
+    patch_scrape(monkeypatch, ended_lot("unsold", price="200"))
+    await pc.check_single_price(tr, make_bot())
+    fresh = await load_tracker(tr.id)
+    assert fresh.status == TrackerStatus.ACTIVE and fresh.lot_outcome == "unsold"   # можуть виставити знову
+    assert h.list_item_lines(fresh, "uk")[1:] == ["🏁 Торги завершено, лот не продано"]
+
+    patch_scrape(monkeypatch, lot("250", ends_in=timedelta(days=3)))                 # перевиставили
+    await pc.check_single_price(fresh, make_bot())
+    again = await load_tracker(tr.id)
+    assert again.lot_outcome is None and again.is_available is True
+
+
+async def test_ended_without_known_outcome_is_just_ended(db):
+    user = await seed_user(1)
+    tr = await seed_lot(user, ends_at=datetime.utcnow() - timedelta(minutes=1))
+    assert h.list_item_lines(tr, "uk")[1:] == ["🏁 Торги завершено"]
+
+
+# ─── Під кінець торгів — частіше (Premium) ───────────────────────
+# Ставка в останні хвилини продовжує лот на +5 хв: за AUCTION_END_WINDOW_MINUTES (20) до кінця
+# Premium-лот перевіряємо раз на AUCTION_END_INTERVAL_MINUTES (2); магазини — як і раніше, раз на 60 хв.
+
+async def _lot_checked(tier: str, *, ends_in: timedelta, checked_ago: timedelta, available: bool = True) -> PriceTracker:
+    user = await seed_user(1, tier=tier)
+    tr = await seed_lot(user, ends_at=datetime.utcnow() + ends_in)
+    async with get_session() as s:
+        row = await s.get(PriceTracker, tr.id)
+        row.last_checked_at = datetime.utcnow() - checked_ago
+        row.is_available = available
+    return tr
+
+
+@pytest.mark.parametrize("tier, ends_in, checked_ago, available, due", [
+    ("premium", timedelta(minutes=10), timedelta(minutes=2), True, True),       # у вікні — раз на 2 хв
+    ("premium", timedelta(minutes=10), timedelta(seconds=100), True, True),     # допуск 30 с: тік щохвилини
+    ("premium", timedelta(minutes=10), timedelta(minutes=1), True, False),
+    ("premium", timedelta(minutes=19), timedelta(minutes=2), True, True),       # межа вікна (20 хв)
+    ("premium", timedelta(minutes=40), timedelta(minutes=30), True, False),     # до вікна — раз на 60 хв
+    ("premium", timedelta(minutes=-5), timedelta(minutes=2), True, True),       # щойно скінчилось: +5 хв / результат
+    ("premium", timedelta(minutes=-30), timedelta(minutes=30), True, False),
+    ("premium", timedelta(minutes=10), timedelta(minutes=2), False, False),     # сторінка вже каже «завершено»
+    ("free", timedelta(minutes=10), timedelta(minutes=30), True, False),        # безкоштовний — раз на 6 год
+])
+async def test_premium_lot_checked_every_2_min_near_end(db, dispatch_spies, tier, ends_in, checked_ago, available, due):
+    checked, _, _ = dispatch_spies
+    tr = await _lot_checked(tier, ends_in=ends_in, checked_ago=checked_ago, available=available)
+    await pc.dispatch_price_checks(make_bot())
+    assert ([t.id for t in checked] == [tr.id]) is due
+
+
+async def test_shops_stay_hourly_for_premium(db, dispatch_spies):
+    checked, _, _ = dispatch_spies
+    user = await seed_user(1, tier="premium")
+    await seed_tracker(user, "https://rozetka.com.ua/p/1", last_checked=datetime.utcnow() - timedelta(minutes=50))
+    due = await seed_tracker(user, "https://rozetka.com.ua/p/2", last_checked=datetime.utcnow() - timedelta(minutes=61))
+    await pc.dispatch_price_checks(make_bot())
+    assert [t.id for t in checked] == [due.id]

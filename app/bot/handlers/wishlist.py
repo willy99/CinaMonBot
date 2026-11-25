@@ -29,7 +29,7 @@ router = Router(name="wishlist")
 
 SHARE_MAX_ITEMS = 20
 TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{8,24}")
-_SHOWN = (TrackerStatus.ACTIVE, TrackerStatus.PAUSED, TrackerStatus.PAUSED_LIMIT)
+_SHOWN = (TrackerStatus.ACTIVE, TrackerStatus.PAUSED, TrackerStatus.PAUSED_LIMIT, TrackerStatus.PAUSED_DOMAIN)
 FALLBACK_BOT_USERNAME = "cina_mon_bot"
 
 

@@ -146,7 +146,7 @@ async def platforms_page() -> None:
             table.add_slot("body-cell-last_fail_reason", r'''
                 <q-td :props="props"><span v-if="props.value">{{ props.value }} <span class="pg-muted" style="font-family:system-ui">· {{ props.row.last_fail_at }}</span></span><span v-else class="pg-muted">—</span></q-td>''')
             table.add_slot("no-data", f'<div class="full-width row flex-center q-pa-md pg-muted">{at("nothing_found")}</div>')
-            table.on("rowClick", lambda e: _open_detail(e.args[1]))
+            table.on("rowClick", lambda e: _open_detail(e.args[1], on_change=reload))
 
         async def reload() -> None:
             rows = await q.platforms_table(state["status"], state["country"], state["search"])
@@ -172,7 +172,7 @@ async def platforms_page() -> None:
         await reload()
 
 
-async def _open_detail(row: dict) -> None:
+async def _open_detail(row: dict, on_change=None) -> None:
     """Діалог з довідником платформи, денними ok/fail за 30 днів і останніми спробами."""
     d = await q.platform_detail(row["domain"])
     with ui.dialog() as dlg, ui.card().style("min-width: 820px; max-width: 95vw; max-height: 92vh"):
@@ -183,6 +183,23 @@ async def _open_detail(row: dict) -> None:
                 if d["country"]:
                     ui.label(country_label(d["country"], admin_lang())).classes("pg-muted").style("font-size:13px")
             ui.button(icon="close", on_click=dlg.close).props("flat round dense")
+
+        if d["auto_blocked"]:
+            # Магазин стабільно блокує перевірки: позиції юзерів на паузі, поки адмін не розблокує
+            async def unblock() -> None:
+                from botkit.admin import auth
+                n = await q.unblock_domain(d["domain"])
+                await auth.audit("domain_unblock", d["domain"], f"resumed={n}")
+                ui.notify(at("platforms_unblocked", n=n), type="positive")
+                dlg.close()
+                if on_change is not None:
+                    await on_change()
+
+            with ui.row().classes("w-full items-center justify-between no-wrap gap-4") \
+                    .style("padding:10px 12px; border-radius:8px; background:var(--critical-bg, rgba(208,59,59,.12))"):
+                ui.label(at("platforms_auto_blocked", when=d["blocked_at"], reason=d["blocked_reason"] or "—",
+                            n=d["paused_domain"])).style("font-size:13px")
+                ui.button(at("platforms_unblock_btn"), icon="lock_open", on_click=unblock).props("unelevated dense no-caps")
 
         with ui.row().classes("items-center gap-4 wrap").style("font-size:13px"):
             ui.label(d["domain"]).classes("pg-mono")

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 from html import escape as html_escape
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
@@ -21,7 +22,6 @@ from sqlalchemy.orm import joinedload
 
 from app.scheduler import breaker
 from botkit.ops import heartbeat
-from app.config import settings
 from app.services import runtime_settings as rt
 from app.database.session import get_session
 from app.database.models import (
@@ -29,7 +29,6 @@ from app.database.models import (
     TrackerStatus, PriceEventType, NotificationStatus,
 )
 from app.services.scrapers.scraper import ScraperFactory, ScrapeError
-from app.services.scrapers.registry import platform_for, platform_name
 from app.services.scrapers.scrape_log import prune_scrape_log
 from app.i18n import t, fmt_money, fmt_percent
 from app.scheduler.digest import send_weekly_digests
@@ -42,6 +41,14 @@ scheduler = AsyncIOScheduler(timezone="Europe/Kyiv")
 # НОВЕ: максимум перевірок за один запуск — обмежує пікове навантаження
 # Після кінця торгів ще кілька годин перевіряємо (фінальна ціна, продовження +5 хв), далі — ні
 ENDED_AUCTION_GRACE = timedelta(hours=6)
+# Після кінця торгів ще трохи перевіряємо часто: ставка наприкінці продовжує лот на +5 хв, і так ловимо результат
+AUCTION_END_TAIL = timedelta(minutes=10)
+# Тік планувальника — щохвилини, а перевірка займає секунди: без допуску «раз на 2 хв» ставало б «раз на 3»
+DUE_SLACK = timedelta(seconds=30)
+
+# Одне посилання — один запит за прогін: кілька юзерів можуть стежити за тією самою сторінкою.
+# dispatch кладе сюди {canonical_url: Task} на час прогону; поза прогоном (None) — звичайний scrape.
+_run_scrapes: ContextVar[dict[str, asyncio.Task] | None] = ContextVar("_run_scrapes", default=None)
 MAX_CHECKS_PER_RUN = 200
 
 
@@ -73,10 +80,12 @@ def setup_scheduler(bot) -> None:
     scheduler.add_job(
         dispatch_price_checks,
         trigger="interval",
-        minutes=5,   # НОВЕ: кожні 5 хв замість SCHEDULER_INTERVAL_MINUTES для рівномірності
+        minutes=1,   # щохвилини: Premium-лоти під кінець торгів — раз на 2 хв; решта — за своїм інтервалом
         args=[bot],
         id="dispatch_price_checks",
         replace_existing=True,
+        max_instances=1,
+        coalesce=True,
         # Перший запуск через 1 хвилину після старту
         next_run_time=datetime.now(timezone.utc) + timedelta(minutes=1),
     )
@@ -112,7 +121,7 @@ def setup_scheduler(bot) -> None:
         coalesce=True,
     )
     scheduler.start()
-    logger.info("scheduler_started", interval_minutes=5, max_per_run=MAX_CHECKS_PER_RUN)
+    logger.info("scheduler_started", interval_minutes=1, max_per_run=MAX_CHECKS_PER_RUN)
 
 
 async def handle_expired_premiums(bot) -> None:
@@ -196,6 +205,8 @@ async def dispatch_price_checks(bot) -> None:
 async def _dispatch_price_checks(bot) -> None:
     logger.info("dispatch_started")
 
+    await _pause_blocked_domain_trackers()
+
     async with get_session() as session:
         # НОВЕ: сортуємо по last_checked_at ASC — найстаріші перевіряємо першими
         # NULL (ніколи не перевірялись) йдуть самими першими
@@ -210,29 +221,33 @@ async def _dispatch_price_checks(bot) -> None:
 
     now = datetime.now(timezone.utc)
     to_check = []
+    # Межа на магазин: різних сторінок за хвилину (прогін = хвилина). Трекери вже відсортовані від найдавніше
+    # перевірених, тож надлишок рівномірно переходить на наступні хвилини, а не б'є сплеском.
+    cap = int(rt.cached("DOMAIN_MAX_CHECKS_PER_MINUTE"))
+    urls_by_domain: dict[str, set[str]] = {}
+    deferred = 0
 
     for tracker in trackers:
-        user = tracker.user
-        interval = (
-            rt.cached("PREMIUM_CHECK_INTERVAL_MINUTES")
-            if user.is_premium
-            else rt.cached("FREE_TIER_CHECK_INTERVAL_MINUTES")
-        )
+        interval = _check_interval_minutes(tracker, now.replace(tzinfo=None))
         if tracker.source and breaker.is_open(tracker.source):
             continue                  # магазин тимчасово недоступний — last_checked_at не чіпаємо
         if tracker.ends_at is not None and tracker.ends_at < now.replace(tzinfo=None) - ENDED_AUCTION_GRACE:
             continue                  # торги давно завершені, фінальна ціна вже є — не смикаємо сайт
-        if tracker.last_checked_at is None:
-            to_check.append(tracker)
-        else:
+        if tracker.last_checked_at is not None:
             last = tracker.last_checked_at
             if last.tzinfo is None:
                 last = last.replace(tzinfo=timezone.utc)
-            if now >= last + timedelta(minutes=interval):
-                to_check.append(tracker)
+            if now < last + timedelta(minutes=interval) - DUE_SLACK:
+                continue
+        urls = urls_by_domain.setdefault(tracker.source or "", set())
+        if tracker.canonical_url not in urls and len(urls) >= cap:
+            deferred += 1
+            continue                  # межа магазину на цю хвилину — візьмемо наступним тіком
+        urls.add(tracker.canonical_url)
+        to_check.append(tracker)
 
         # НОВЕ: зупиняємось як тільки набрали ліміт
-        # Решта трекерів дочекається наступного запуску через 5 хвилин
+        # Решта трекерів дочекається наступного запуску (щохвилини)
         if len(to_check) >= MAX_CHECKS_PER_RUN:
             break
 
@@ -240,68 +255,100 @@ async def _dispatch_price_checks(bot) -> None:
         logger.info("dispatch_nothing_to_check", total=len(trackers))
         return
 
-    logger.info("dispatch_checking", count=len(to_check), total=len(trackers))
+    logger.info("dispatch_checking", count=len(to_check), total=len(trackers), deferred_by_shop_cap=deferred)
 
     semaphore = asyncio.Semaphore(5)
-    results_by_domain: dict[str, list[bool]] = {}
 
     async def check_with_semaphore(tracker: PriceTracker) -> None:
-        domain = tracker.source
         async with semaphore:
             try:
                 await check_single_price(tracker, bot)
-                results_by_domain.setdefault(domain, []).append(True)
             except Exception as e:
                 logger.error("tracker_check_failed", tracker_id=tracker.id, error=str(e))
-                results_by_domain.setdefault(domain, []).append(False)
 
-    await asyncio.gather(*[check_with_semaphore(t) for t in to_check])
-    await _check_domain_health(bot, results_by_domain)
+    token = _run_scrapes.set({})
+    try:
+        await asyncio.gather(*[check_with_semaphore(t) for t in to_check])
+    finally:
+        _run_scrapes.reset(token)
+    await _update_domain_blocks({t.source for t in to_check if t.source})
     logger.info("dispatch_finished", checked=len(to_check))
 
 
-_PLATFORM_STATUS_UA = {
-    "verified": "перевірено",
-    "experimental": "експериментально",
-    "needs_js": "потрібен JS",
-    "blocked": "блокує запити",
-}
+# Магазин «стабільно блокує», якщо за вікно було ≥ MIN спроб, жодної вдалої, і всі невдачі — «blocked»
+# (антибот / 403 від магазину). 404 / зміна сторінки — проблема окремого товару; мережа / браузер / таймаут —
+# наш бік (20.10 вночі зникав інтернет), такі збої магазин не блокують.
+DOMAIN_BLOCK_WINDOW = timedelta(hours=24)
+DOMAIN_BLOCK_MIN_ATTEMPTS = 5
+DOMAIN_BLOCK_REASONS = frozenset({"blocked"})
 
 
-async def _check_domain_health(bot, results_by_domain: dict[str, list[bool]]) -> None:
-    admin_id = settings.ADMIN_TELEGRAM_ID
-    if not admin_id:
-        return
+async def _update_domain_blocks(domains: set[str], now: datetime | None = None) -> None:
+    """
+    Після перевірок: магазин, що стабільно нас блокує, — у domain_blocks (адмінка показує «заблоковано»),
+    його трекери — PAUSED_DOMAIN. Адміну в Telegram нічого не шлемо (14.10: технічні алерти прибрано).
+    """
+    from collections import Counter
+    from app.database.models import DomainBlock, ScrapeLog
+    now = now or datetime.utcnow()
+    for domain in sorted(domains):
+        async with get_session() as session:
+            if await session.get(DomainBlock, domain) is not None:
+                continue
+            rows = (await session.execute(
+                select(ScrapeLog.ok, ScrapeLog.reason)
+                .where(ScrapeLog.domain == domain, ScrapeLog.created_at >= now - DOMAIN_BLOCK_WINDOW)
+            )).all()
+            if (len(rows) < DOMAIN_BLOCK_MIN_ATTEMPTS or any(ok for ok, _ in rows)
+                    or not all(reason in DOMAIN_BLOCK_REASONS for _, reason in rows)):
+                continue
+            reason = Counter(r for _, r in rows).most_common(1)[0][0]
+            session.add(DomainBlock(domain=domain, reason=reason, blocked_at=now))
+        paused = await _pause_blocked_domain_trackers({domain})
+        logger.warning("domain_blocked", domain=domain, reason=reason, attempts=len(rows), paused=paused)
 
-    for domain, results in results_by_domain.items():
-        if len(results) < 3:
-            continue
-        fails = results.count(False)
-        total = len(results)
-        error_rate = fails / total
-        if error_rate >= 0.5:
-            logger.warning("domain_high_error_rate", domain=domain, error_rate=error_rate)
-            platform = platform_for(domain)
-            status_text = (
-                f"{_PLATFORM_STATUS_UA.get(platform.status, platform.status)}"
-                + (f" · {platform.strategy}" if platform.strategy else "")
-                if platform else "немає в реєстрі (універсальний парсер)"
-            )
-            try:
-                await bot.send_message(
-                    chat_id=admin_id,
-                    text=(
-                        f"🚨 <b>Проблема з парсером: {platform_name(domain)}</b>\n\n"
-                        f"🌐 Домен: <code>{domain}</code>\n"
-                        f"📒 Статус у реєстрі: {status_text}\n"
-                        f"❌ Помилок: {fails}/{total} ({error_rate:.0%})\n\n"
-                        f"⚙️ Запущено автовідновлення через Claude AI.\n"
-                        f"Якщо не зникне — дивись /platforms у дашборді."
-                    ),
-                    parse_mode="HTML",
-                )
-            except Exception as e:
-                logger.error("admin_alert_failed", error=str(e))
+
+async def _pause_blocked_domain_trackers(domains: set[str] | None = None) -> int:
+    """ACTIVE-трекери заблокованих магазинів → PAUSED_DOMAIN (і ті, що додали вже після блокування)."""
+    from sqlalchemy import update
+    from app.database.models import DomainBlock
+    async with get_session() as session:
+        if domains is None:
+            domains = set((await session.execute(select(DomainBlock.domain))).scalars().all())
+        if not domains:
+            return 0
+        res = await session.execute(
+            update(PriceTracker)
+            .where(PriceTracker.source.in_(domains), PriceTracker.status == TrackerStatus.ACTIVE)
+            .values(status=TrackerStatus.PAUSED_DOMAIN)
+        )
+    return res.rowcount or 0
+
+
+def _check_interval_minutes(tracker: PriceTracker, now: datetime) -> int:
+    """
+    Як часто перевіряти трекер (хв). Premium-лот за AUCTION_END_WINDOW_MINUTES до кінця торгів і ще
+    AUCTION_END_TAIL після — раз на AUCTION_END_INTERVAL_MINUTES (ставка наприкінці продовжує лот на +5 хв;
+    ends_at оновлюється при кожній перевірці). Решта — Premium / Free інтервал, магазини без змін.
+    now — naive UTC, як ends_at у базі.
+    """
+    premium = tracker.user.is_premium
+    if premium and tracker.ends_at is not None and tracker.is_available:
+        window = timedelta(minutes=rt.cached("AUCTION_END_WINDOW_MINUTES"))
+        if tracker.ends_at - window <= now < tracker.ends_at + AUCTION_END_TAIL:
+            return int(rt.cached("AUCTION_END_INTERVAL_MINUTES"))
+    return int(rt.cached("PREMIUM_CHECK_INTERVAL_MINUTES" if premium else "FREE_TIER_CHECK_INTERVAL_MINUTES"))
+
+
+async def _scrape_once_per_run(scraper, url: str):
+    """У межах прогону dispatch — один запит на посилання (результат спільний для всіх юзерів)."""
+    shared = _run_scrapes.get()
+    if shared is None:
+        return await scraper.scrape(url)
+    task = shared.get(url)
+    if task is None:
+        task = shared[url] = asyncio.ensure_future(scraper.scrape(url))
+    return await asyncio.shield(task)
 
 
 async def check_single_price(tracker: PriceTracker, bot) -> None:
@@ -311,7 +358,7 @@ async def check_single_price(tracker: PriceTracker, bot) -> None:
     if not scraper:
         return
 
-    result = await scraper.scrape(tracker.canonical_url)
+    result = await _scrape_once_per_run(scraper, tracker.canonical_url)
     now = datetime.now(timezone.utc)
 
     async with get_session() as session:
@@ -359,6 +406,14 @@ async def check_single_price(tracker: PriceTracker, bot) -> None:
             if old_end is not None and db_tracker.ending_notified_at is not None and new_end - old_end > timedelta(hours=2):
                 db_tracker.ending_notified_at = None      # торги перенесли далеко — нагадаємо ще раз
             db_tracker.ends_at = new_end
+
+        # Аукціон: результат торгів. Продано — далі перевіряти нічого: пауза (звільняє слот), у /list
+        # «Лот продано». Не продано — стежимо далі: лот можуть перевиставити (тоді outcome знову None)
+        if _is_auction(db_tracker):
+            db_tracker.lot_outcome = getattr(result, "lot_outcome", None)
+            if db_tracker.lot_outcome == "sold" and db_tracker.status == TrackerStatus.ACTIVE:
+                db_tracker.status = TrackerStatus.PAUSED
+                logger.info("auction_lot_sold_paused", tracker_id=db_tracker.id, price=str(result.price))
 
         # Пишемо в історію
         if result.price is not None:
@@ -424,6 +479,7 @@ def _suppression_reason(
     Чому НЕ слати сповіщення про подію (None → слати):
     - "muted_restock"   — юзер вимкнув сповіщення про наявність по цьому товару
     - "muted_drop"      — юзер вимкнув сповіщення про зниження/ціль по цьому товару
+    - "muted_increase"  — подорожчання, а юзер не вмикав сповіщення про нього (за замовчуванням вимкнено)
     - "restock_cooldown"— RESTOCK уже надсилали менше ніж RESTOCK_COOLDOWN_DAYS днів тому
                           (товар "мигає" в наявності); виняток — ціна стала нижчою, ніж була
     """
@@ -442,6 +498,8 @@ def _suppression_reason(
     if event in (PriceEventType.DECREASE, PriceEventType.TARGET_REACHED):
         if not tracker.notify_drop:
             return "muted_drop"
+    if event == PriceEventType.INCREASE and not tracker.notify_increase:
+        return "muted_increase"
     if event == PriceEventType.DECREASE and _is_auction(tracker):
         return "auction_no_generic_drop"      # на аукціоні — лише ціль, яку юзер задав сам
     return None
@@ -498,18 +556,20 @@ def _detect_event(
                 crossed = old_price is not None and old_price < target_price
                 if crossed or not target_notified:
                     return PriceEventType.TARGET_REACHED
-            return None                       # для «перевищить» зниження ціни — не подія
         # Ціна досягла цільової
-        if new_price <= target_price:
+        elif new_price <= target_price:
             crossed = old_price is not None and old_price > target_price
             if crossed or not target_notified:
                 return PriceEventType.TARGET_REACHED
 
-    # Ціна впала більш ніж на 3%
-    if old_price and new_price and new_price < old_price:
-        drop_pct = (old_price - new_price) / old_price * 100
-        if drop_pct >= 3:
+    # Ціна змінилась щонайменше на 3%: впала — DECREASE (крім цілі «перевищить»), зросла — INCREASE
+    # (його надсилаємо лише з увімкненим notify_increase — див. _suppression_reason)
+    if old_price and new_price and new_price != old_price:
+        change_pct = (new_price - old_price) / old_price * 100
+        if change_pct <= -3 and target_direction != "above":
             return PriceEventType.DECREASE
+        if change_pct >= 3:
+            return PriceEventType.INCREASE
 
     return None
 
@@ -573,6 +633,17 @@ async def _send_notification(
             target=fmt_money(tracker.target_price, cur, lang),
             url=safe_url,
         )
+    elif event == PriceEventType.INCREASE:
+        diff = new_price - old_price if (old_price and new_price) else Decimal(0)
+        text = t(
+            lang, "notif_increase_auction" if _is_auction(tracker) else "notif_increase",
+            pct=int(diff / old_price * 100) if old_price else 0,
+            title=title_short,
+            old=fmt_money(old_price, cur, lang),
+            new=fmt_money(new_price, cur, lang),
+            diff=fmt_money(diff, cur, lang),
+            url=safe_url,
+        )
     else:  # DECREASE
         diff = old_price - new_price if (old_price and new_price) else Decimal(0)
         pct = int(diff / old_price * 100) if old_price else 0
@@ -588,7 +659,11 @@ async def _send_notification(
 
     # Кнопка "🔕 Не сповіщати…" для саме цього типу події + "⚙️ Налаштування"
     from app.bot.keyboards import MUTE_KIND_BY_EVENT, notification_keyboard
-    keyboard = notification_keyboard(lang, MUTE_KIND_BY_EVENT.get(event, "drop"), tracker.id)
+    # Ціль досягнута — одразу запропонувати нову межу (ставка) / ціль (ціна) в тому ж напрямку
+    retarget = None
+    if event == PriceEventType.TARGET_REACHED:
+        retarget = "above" if tracker.target_direction == "above" else "below"
+    keyboard = notification_keyboard(lang, MUTE_KIND_BY_EVENT.get(event, "drop"), tracker.id, retarget=retarget)
 
     try:
         # Єдиний адресат — власник трекера (tracker.user_id → User.telegram_id)

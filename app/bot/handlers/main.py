@@ -36,7 +36,7 @@ from html import escape as html_escape
 import structlog
 
 from app.bot.keyboards import (
-    digest_toggle_button, notification_keyboard, tracker_settings_keyboard,
+    NOTIFY_FIELDS, digest_toggle_button, notification_keyboard, tracker_settings_keyboard,
 )
 from app.config import settings
 from app.services import runtime_settings as rt
@@ -129,16 +129,19 @@ async def count_active(user_id: str) -> int:
         )).scalar_one()
 
 
-async def get_trackers(user_id: str, include_paused: bool = False) -> list[PriceTracker]:
+async def get_trackers(user_id: str, include_paused: bool = False,
+                       include_errors: bool = False) -> list[PriceTracker]:
+    """include_errors — лише для /list: позиції з помилкою теж видно (в кінці), щоб вони не зникали мовчки."""
     from sqlalchemy import select
     async with get_session() as session:
         if include_paused:
-            # Для /list і /delete — показуємо всі крім ERROR
+            # Для /list і /delete — показуємо всі крім ERROR (для /list — і ERROR, в кінці)
             stmt = (
                 select(PriceTracker)
                 .where(PriceTracker.user_id == user_id,
-                       PriceTracker.status != TrackerStatus.ERROR)
-                .order_by(PriceTracker.status.asc(),  # ACTIVE перші, PAUSED після
+                       *(() if include_errors else (PriceTracker.status != TrackerStatus.ERROR,)))
+                .order_by((PriceTracker.status == TrackerStatus.ERROR).asc(),  # ERROR — останні
+                          PriceTracker.status.asc(),  # ACTIVE перші, PAUSED після
                           PriceTracker.created_at.asc())
             )
         else:
@@ -721,15 +724,64 @@ async def cmd_list_cb(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
-def list_target_text(tr: PriceTracker, lang: str) -> str:
-    """Хвіст рядка /list: ' → 🎯−15%' для цілі у відсотках, ' → 🎯3 825 грн' для абсолютної, '' без цілі."""
-    if not tr.target_price:
-        return ""
-    if tr.target_direction == "above":
-        return t(lang, "list_target_above", price=fmt_money(tr.target_price, tr.currency, lang))
-    if tr.target_percent:
-        return t(lang, "list_target_percent", pct=fmt_percent(tr.target_percent, lang))
-    return f" → 🎯{fmt_money(tr.target_price, tr.currency, lang)}"
+def _expect_line(tr: PriceTracker, lang: str, auction: bool) -> str:
+    """
+    Чого чекаємо по ціні — так само, як вирішує планувальник: ціль (з напрямком / у відсотках) або
+    загальна знижка ≥3% (на аукціоні її немає); notify_drop=False глушить і ціль, і знижку.
+    Плюс подорожчання ≥3%, якщо ввімкнене.
+    """
+    cur = tr.currency
+    if auction and not tr.target_price:
+        line = t(lang, "list_expect_lot")
+    elif not tr.notify_drop:
+        line = ""
+    elif tr.target_price and tr.target_direction == "above":
+        line = t(lang, "list_expect_above", price=fmt_money(tr.target_price, cur, lang))
+    elif tr.target_price and tr.target_percent:
+        line = t(lang, "list_expect_percent", pct=fmt_percent(tr.target_percent, lang),
+                 price=fmt_money(tr.target_price, cur, lang))
+    elif tr.target_price:
+        line = t(lang, "list_expect_below", price=fmt_money(tr.target_price, cur, lang))
+    else:
+        line = t(lang, "list_expect_drop")
+    if tr.notify_increase:
+        line = f"{line} · {t(lang, 'list_expect_increase')}" if line else t(lang, "list_expect_increase_only")
+    return line or t(lang, "list_expect_muted")
+
+
+def list_item_lines(tr: PriceTracker, lang: str, now: datetime | None = None) -> list[str]:
+    """
+    Рядки під назвою товару в /list: ціна й магазин; для аукціону — кінець торгів і нагадування;
+    і чого саме чекаємо (ціль / знижка / ставка / наявність), щоб не треба було відкривати картку.
+    """
+    from app.bot.keyboards import reminder_label
+    from app.timeutil import fmt as _fmt
+    now = now or datetime.utcnow()
+    auction = _is_auction_source(tr.source)
+    price_line = f"💰 {fmt_money(tr.current_price, tr.currency, lang)}"
+    if tr.source:
+        # Магазин — посиланням саме на товар: голий «rozetka.com.ua» Telegram сам лінкує на головну сайту
+        shop = html_escape(tr.source, quote=False)
+        url = tr.canonical_url or tr.url
+        price_line += f" · <a href='{html_escape(url, quote=True)}'>{shop}</a>" if url else f" · {shop}"
+    lines = [price_line]
+    if tr.status == TrackerStatus.PAUSED_DOMAIN:
+        return lines + [t(lang, "list_paused_domain")]     # магазин блокує перевірки — чекаємо розблокування
+    if tr.status == TrackerStatus.ERROR:
+        return lines + [t(lang, "list_error")]
+    if auction:
+        if tr.lot_outcome == "sold":
+            return lines + [t(lang, "list_lot_sold")]
+        if (tr.ends_at and tr.ends_at <= now) or not tr.is_available:
+            return lines + [t(lang, "list_lot_unsold" if tr.lot_outcome == "unsold" else "list_auction_ended")]
+        if tr.ends_at:
+            end = t(lang, "list_auction_until", end=_fmt(tr.ends_at, "%d.%m %H:%M"))
+            if tr.remind_before_minutes:
+                end += " · " + t(lang, "list_auction_remind", value=reminder_label(lang, tr.remind_before_minutes))
+            lines.append(end)
+    elif not tr.is_available:
+        return lines + [t(lang, "list_out_of_stock" if tr.notify_restock else "list_out_of_stock_muted")]
+    return lines + [_expect_line(tr, lang, auction)]
 
 
 async def _show_list(user: User, msg: Message) -> None:
@@ -739,7 +791,7 @@ async def _show_list(user: User, msg: Message) -> None:
         return
     # Перед показом перераховуємо ліміт: список завжди відображає реальний стан
     await sync_free_limit(user.id)
-    trackers = await get_trackers(user.id, include_paused=True)
+    trackers = await get_trackers(user.id, include_paused=True, include_errors=True)
 
     if not trackers:
         await msg.answer(
@@ -758,17 +810,21 @@ async def _show_list(user: User, msg: Message) -> None:
         if tr.status == TrackerStatus.PAUSED_LIMIT:
             status_icon = "⏳"
             status_text = t(lang, "list_paused_limit")
+        elif tr.status == TrackerStatus.ERROR:
+            status_icon = "⚠️"
+            status_text = ""
         else:
             status_icon = "✅" if tr.status == TrackerStatus.ACTIVE else "⏸"
             status_text = ""
 
-        price = fmt_money(tr.current_price, tr.currency, lang)
-        target = list_target_text(tr, lang)
-
-        # Формуємо рядок товару
+        # Формуємо блок товару: назва, ціна · магазин, [торги], чого чекаємо
         title = html_escape((tr.title or t(lang, "untitled"))[:40], quote=False)   # назва — з сайту магазину
         lines.append(f"{i}. {status_icon} <b>{title}</b>")
-        lines.append(f"   💰 {price}{target} {status_text}\n")
+        item = list_item_lines(tr, lang)
+        if status_text:
+            item[0] += f" {status_text}"
+        lines.extend(f"   {line}" for line in item)
+        lines.append("")
 
     if len(trackers) > display_limit:
         lines.append(t(lang, "list_more", n=len(trackers) - display_limit))
@@ -798,6 +854,7 @@ async def _show_list(user: User, msg: Message) -> None:
             ],
         ]),
         parse_mode="HTML",
+        disable_web_page_preview=True,          # у списку десятки посилань — без прев'ю першого з них
     )
 
 
@@ -1040,6 +1097,7 @@ async def _show_tracker_settings(msg: Message, user: User, tracker: PriceTracker
     )
     keyboard = tracker_settings_keyboard(
         lang, tracker.id, notify_drop=tracker.notify_drop, notify_restock=tracker.notify_restock,
+        notify_increase=tracker.notify_increase,
         remind_minutes=tracker.remind_before_minutes, auction=_is_auction_source(tracker.source),
     )
     send = msg.edit_text if edit else msg.answer
@@ -1130,19 +1188,16 @@ async def open_tracker_settings_new(callback: CallbackQuery) -> None:
 
 
 def _set_notify_flag(tracker: PriceTracker, kind: str, enabled: bool) -> None:
-    if kind == "restock":
-        tracker.notify_restock = enabled
-    else:
-        tracker.notify_drop = enabled
+    setattr(tracker, NOTIFY_FIELDS[kind], enabled)
 
 
 @router.callback_query(F.data.startswith("ttoggle:"))
 async def toggle_tracker_setting(callback: CallbackQuery) -> None:
-    """Перемикач ✅/☐ на картці товару: ttoggle:<drop|restock>:<tracker_id>."""
+    """Перемикач ✅/☐ на картці товару: ttoggle:<drop|restock|increase>:<tracker_id>."""
     if not callback.from_user or not callback.message:
         return
     parts = (callback.data or "").split(":", 2)
-    if len(parts) != 3 or parts[1] not in ("drop", "restock"):
+    if len(parts) != 3 or parts[1] not in NOTIFY_FIELDS:
         await callback.answer()
         return
     _, kind, tracker_id = parts
@@ -1158,8 +1213,7 @@ async def toggle_tracker_setting(callback: CallbackQuery) -> None:
             logger.warning("tracker_access_denied", telegram_id=callback.from_user.id, tracker_id=tracker_id, action="ttoggle")
             await callback.answer(t(lang, "no_access"))
             return
-        current = tracker.notify_restock if kind == "restock" else tracker.notify_drop
-        enabled = not current
+        enabled = not getattr(tracker, NOTIFY_FIELDS[kind])
         _set_notify_flag(tracker, kind, enabled)
 
     logger.info("tracker_notify_toggled", telegram_id=callback.from_user.id, tracker_id=tracker_id, kind=kind, enabled=enabled)
@@ -1170,13 +1224,13 @@ async def toggle_tracker_setting(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("mute:") | F.data.startswith("unmute:"))
 async def toggle_mute_from_notification(callback: CallbackQuery) -> None:
     """
-    Кнопка під сповіщенням: mute:<restock|drop>:<tracker_id> вимикає цей тип сповіщень
+    Кнопка під сповіщенням: mute:<restock|drop|increase>:<tracker_id> вимикає цей тип сповіщень
     по товару, unmute:... вмикає назад. Перемальовуємо лише клавіатуру — текст сповіщення лишається.
     """
     if not callback.from_user or not callback.message:
         return
     parts = (callback.data or "").split(":", 2)
-    if len(parts) != 3 or parts[1] not in ("drop", "restock"):
+    if len(parts) != 3 or parts[1] not in NOTIFY_FIELDS:
         await callback.answer()
         return
     action, kind, tracker_id = parts
@@ -1194,15 +1248,129 @@ async def toggle_mute_from_notification(callback: CallbackQuery) -> None:
             await callback.answer(t(lang, "no_access"))
             return
         _set_notify_flag(tracker, kind, enabled)
+        markup = callback.message.reply_markup
+        had_retarget = bool(markup) and any((b.callback_data or "").startswith("newtarget:")
+                                            for row in markup.inline_keyboard for b in row)
+        retarget = _target_direction(tracker) if had_retarget else None
 
     logger.info("tracker_notify_toggled", telegram_id=callback.from_user.id, tracker_id=tracker_id, kind=kind, enabled=enabled)
     try:
         await callback.message.edit_reply_markup(
-            reply_markup=notification_keyboard(lang, kind, tracker_id, muted=not enabled),
+            reply_markup=notification_keyboard(lang, kind, tracker_id, muted=not enabled, retarget=retarget),
         )
     except Exception as e:  # noqa: BLE001 — старе повідомлення могло стати нередагованим
         logger.warning("notification_keyboard_edit_failed", tracker_id=tracker_id, error=str(e))
     await callback.answer(t(lang, f"{'unmute' if enabled else 'mute'}_toast_{kind}"))
+
+
+# ─── Нова межа / ціль з-під сповіщення «ціль досягнута» ──────────
+
+class NewTargetStates(StatesGroup):
+    waiting = State()
+
+
+def _target_direction(tracker: PriceTracker) -> str:
+    """«above» — межа ставки (аукціон), «below» — ціль «впаде до» (типово)."""
+    return "above" if tracker.target_direction == "above" else "below"
+
+
+def _auction_over(tracker: PriceTracker) -> bool:
+    return _is_auction_source(tracker.source) and bool(
+        tracker.lot_outcome or not tracker.is_available
+        or (tracker.ends_at and tracker.ends_at <= datetime.utcnow()))
+
+
+@router.callback_query(F.data.startswith("newtarget:"))
+async def ask_new_target(callback: CallbackQuery, state: FSMContext) -> None:
+    """Кнопка під «ціль досягнута»: попросити нову суму або відсоток у тому ж напрямку."""
+    if not callback.from_user or not callback.message:
+        return
+    user = await get_or_create_user(callback.from_user)
+    lang = user.lang
+    tracker = await _own_tracker(callback, user, callback.data.split(":", 1)[1])
+    if not tracker:
+        return
+    if _auction_over(tracker):
+        await callback.message.answer(t(lang, "new_target_ended"))
+        await callback.answer()
+        return
+    direction = _target_direction(tracker)
+    await state.set_state(NewTargetStates.waiting)
+    await state.update_data(tracker_id=tracker.id)
+    cur = tracker.currency
+    await callback.message.answer(
+        t(lang, f"ask_new_target_{direction}",
+          title=html_escape((tracker.title or t(lang, "item"))[:60], quote=False),
+          price=fmt_money(tracker.current_price, cur, lang),
+          target=fmt_money(tracker.target_price, cur, lang) if tracker.target_price else "—"),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=t(lang, "btn_cancel"), callback_data="newtarget_cancel")],
+        ]),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(NewTargetStates.waiting)
+async def process_new_target(message: Message, state: FSMContext) -> None:
+    """Сума («2500») або відсоток від поточної ціни («20%»): «above» — вище ставки, «below» — нижче ціни."""
+    if not message.from_user:
+        return
+    user = await get_or_create_user(message.from_user)
+    lang = user.lang
+    parsed = parse_target(message.text or "")
+    if parsed is None:
+        await message.answer(t(lang, "target_invalid"), parse_mode="HTML")
+        return
+    kind, value = parsed
+    tracker_id = (await state.get_data()).get("tracker_id")
+    async with get_session() as session:
+        tracker = await session.get(PriceTracker, tracker_id) if tracker_id else None
+        if tracker is None or tracker.user_id != user.id:
+            await state.clear()
+            await message.answer(t(lang, "not_found"))
+            return
+        direction = _target_direction(tracker)
+        current = tracker.current_price
+        currency = tracker.currency
+        target_percent = baseline = None
+        if kind == "percent":
+            top = TARGET_PERCENT_UP_MAX if direction == "above" else TARGET_PERCENT_MAX
+            if current is None:
+                await message.answer(t(lang, "target_percent_no_price"), parse_mode="HTML")
+                return
+            if not (TARGET_PERCENT_MIN <= value <= top):
+                await message.answer(t(lang, "target_percent_range"), parse_mode="HTML")
+                return
+            target = percent_target_price_up(current, value) if direction == "above" else percent_target_price(current, value)
+            target_percent, baseline = value, current
+        else:
+            target = value
+        if current is not None:
+            cur_text = fmt_money(current, currency, lang)
+            if direction == "above" and target <= current:
+                await message.answer(t(lang, "auction_above_invalid", price=cur_text), parse_mode="HTML")
+                return
+            if direction == "below" and target >= current:
+                await message.answer(t(lang, "auction_below_invalid", price=cur_text), parse_mode="HTML")
+                return
+        # Стара ціль уже «сповіщена» — нову ловимо на перетині (поточна ціна по інший бік, див. _detect_event)
+        tracker.target_price, tracker.target_percent, tracker.baseline_price = target, target_percent, baseline
+    await state.clear()
+    logger.info("tracker_target_changed", telegram_id=message.from_user.id, tracker_id=tracker_id,
+                direction=direction, target=str(target))
+    await message.answer(t(lang, f"new_target_saved_{direction}", price=fmt_money(target, currency, lang)),
+                         parse_mode="HTML")
+
+
+@router.callback_query(F.data == "newtarget_cancel")
+async def cancel_new_target(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    if callback.from_user and callback.message:
+        user = await get_or_create_user(callback.from_user)
+        with suppress(TelegramBadRequest):
+            await callback.message.edit_text(t(user.lang, "cancelled"))
+    await callback.answer()
 
 
 # ─── /premium ────────────────────────────────────────────────────

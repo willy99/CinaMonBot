@@ -90,3 +90,19 @@ def test_factory_and_registry():
     assert isinstance(ScraperFactory.get("https://fakeviolity.com/ua/1"), GenericScraper)
     p = platform_for("violity.com")
     assert p and p.name == "Violity" and p.status == "verified" and p.strategy == "violity-lot"
+
+
+@pytest.mark.parametrize("name, outcome", [
+    ("sold.html", "sold"),               # «Лот проданий (1 ставка)» — справжня розмітка лота 124551615
+    ("finished.html", "unsold"),         # «Торги завершені», 0 ставок
+    ("active.html", None),               # торги тривають
+])
+def test_lot_outcome(name, outcome):
+    p = violity.extract_violity(html(name), "https://violity.com/ua/124551615", now=BEFORE_END)
+    assert p.lot_outcome == outcome and p.is_available is (outcome is None)
+
+
+def test_lot_past_end_time_has_no_outcome_until_page_shows_it():
+    after = datetime(2026, 10, 25, 0, 0, tzinfo=KYIV)
+    p = violity.extract_violity(html("active.html"), "https://violity.com/ua/124877135", now=after)
+    assert p.is_available is False and p.lot_outcome is None

@@ -18,23 +18,30 @@ MUTE_KIND_BY_EVENT: dict[str, str] = {
     PriceEventType.RESTOCK: "restock",
     PriceEventType.DECREASE: "drop",
     PriceEventType.TARGET_REACHED: "drop",
+    PriceEventType.INCREASE: "increase",
 }
 
+# Групи сповіщень по товару: kind у mute:/unmute:/ttoggle: → поле PriceTracker
+NOTIFY_FIELDS: dict[str, str] = {"drop": "notify_drop", "restock": "notify_restock", "increase": "notify_increase"}
 
-def notification_keyboard(lang: str, kind: str, tracker_id: str, *, muted: bool = False) -> InlineKeyboardMarkup:
+
+def notification_keyboard(lang: str, kind: str, tracker_id: str, *, muted: bool = False,
+                          retarget: str | None = None) -> InlineKeyboardMarkup:
     """
     Клавіатура під сповіщенням: одна контекстна кнопка mute/unmute + "⚙️ Налаштування".
-    kind: "restock" | "drop". muted=True → кнопка "🔔 Увімкнути знову" (unmute:...).
+    kind: "restock" | "drop" | "increase". muted=True → кнопка "🔔 Увімкнути знову" (unmute:...).
+    retarget: "above" | "below" — під «ціль досягнута»: кнопка «🎯 Нова межа ставки / Нова ціль» (newtarget:...).
     """
     if muted:
         toggle = InlineKeyboardButton(text=t(lang, "btn_unmute"), callback_data=f"unmute:{kind}:{tracker_id}")
     else:
-        key = "btn_mute_restock" if kind == "restock" else "btn_mute_drop"
-        toggle = InlineKeyboardButton(text=t(lang, key), callback_data=f"mute:{kind}:{tracker_id}")
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [toggle],
-        [InlineKeyboardButton(text=t(lang, "btn_tracker_settings"), callback_data=f"tsettings:{tracker_id}")],
-    ])
+        toggle = InlineKeyboardButton(text=t(lang, f"btn_mute_{kind}"), callback_data=f"mute:{kind}:{tracker_id}")
+    rows = [[toggle]]
+    if retarget:
+        rows.append([InlineKeyboardButton(text=t(lang, f"btn_new_target_{retarget}"),
+                                          callback_data=f"newtarget:{tracker_id}")])
+    rows.append([InlineKeyboardButton(text=t(lang, "btn_tracker_settings"), callback_data=f"tsettings:{tracker_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def digest_keyboard(lang: str) -> InlineKeyboardMarkup:
@@ -74,13 +81,16 @@ def reminder_keyboard(lang: str, tracker_id: str, current: int | None) -> Inline
 
 
 def tracker_settings_keyboard(lang: str, tracker_id: str, *, notify_drop: bool, notify_restock: bool,
-                              remind_minutes: int | None = None, auction: bool = False) -> InlineKeyboardMarkup:
+                              notify_increase: bool = False, remind_minutes: int | None = None,
+                              auction: bool = False) -> InlineKeyboardMarkup:
     """Картка налаштувань одного товару: перемикачі (✅/☐), для аукціону — коли нагадати, назад, видалити."""
     def mark(flag: bool) -> str:
         return "✅" if flag else "☐"
     rows = [
         [InlineKeyboardButton(text=f"{mark(notify_drop)} {t(lang, 'toggle_drop')}",
                               callback_data=f"ttoggle:drop:{tracker_id}")],
+        [InlineKeyboardButton(text=f"{mark(notify_increase)} {t(lang, 'toggle_increase')}",
+                              callback_data=f"ttoggle:increase:{tracker_id}")],
     ]
     if auction:
         rows.append(reminder_row(lang, tracker_id, remind_minutes, "trem"))

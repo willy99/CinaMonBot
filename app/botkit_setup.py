@@ -20,7 +20,7 @@ CONTEXT = botkit.Context(
     app_name="ЦінаБот", settings=settings, get_session=get_session,
     models=botkit.Models(Admin, AdminAction, User, Heartbeat, AppSetting), root=ROOT,
     t=t, resolve_lang=resolve_lang, legacy_upgrade=legacy_upgrade,
-    heartbeat_tick_seconds=300,            # dispatch_price_checks — кожні 5 хв
+    heartbeat_tick_seconds=300,            # dispatch щохвилини, але прогін буває довгим — поріг «не тікав» з запасом
     backup_prefix="priceguard-",
 )
 botkit.setup(CONTEXT)

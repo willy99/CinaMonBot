@@ -141,7 +141,7 @@ async def dashboard_page() -> None:
                         <q-td :props="props"><span class="pg-ellipsis" style="max-width:260px">{{ props.value }}</span></q-td>''')
                     tbl.add_slot("body-cell-status", r'''
                         <q-td :props="props">
-                          <span class="pg-badge" :class="props.value === 'error' ? 'critical' : (props.value === 'paused' || props.value === 'paused_limit') ? 'warning' : 'good'">
+                          <span class="pg-badge" :class="props.value === 'error' ? 'critical' : (props.value === 'paused' || props.value === 'paused_limit' || props.value === 'paused_domain') ? 'warning' : 'good'">
                             <span class="dot"></span>{{ __LABELS__[props.value] || props.value }}
                           </span>
                         </q-td>'''.replace("__LABELS__", slot_labels(TRACKER_STATUS_KEYS)))

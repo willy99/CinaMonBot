@@ -107,7 +107,7 @@ D = Decimal
     (D("100"), D("97"), None, True, True, PriceEventType.DECREASE),         # рівно 3%
     (D("100"), D("90"), None, True, True, PriceEventType.DECREASE),
     (D("100"), D("97.01"), None, True, True, None),                         # менше 3%
-    (D("100"), D("110"), None, True, True, None),                           # подорожчання
+    (D("100"), D("110"), None, True, True, PriceEventType.INCREASE),        # подорожчання (шлемо лише з notify_increase)
     (D("100"), D("100"), None, True, True, None),                           # без змін
     (None, D("100"), None, True, True, None),                               # перша перевірка без цілі
     (D("100"), None, None, True, True, None),                               # ціна зникла
@@ -404,7 +404,7 @@ async def test_notification_skipped_for_blocked_user(db):
 
 @pytest.fixture
 def dispatch_spies(monkeypatch):
-    """Підміняємо check_single_price і _check_domain_health — перевіряємо лише вибір трекерів."""
+    """Підміняємо check_single_price і _update_domain_blocks — перевіряємо лише вибір трекерів."""
     checked: list[PriceTracker] = []
 
     async def fake_check(tracker, bot):
@@ -413,7 +413,7 @@ def dispatch_spies(monkeypatch):
     check = AsyncMock(side_effect=fake_check)
     health = AsyncMock()
     monkeypatch.setattr(pc, "check_single_price", check)
-    monkeypatch.setattr(pc, "_check_domain_health", health)
+    monkeypatch.setattr(pc, "_update_domain_blocks", health)
     return checked, check, health
 
 
@@ -436,8 +436,7 @@ async def test_dispatch_respects_tier_intervals(db, dispatch_spies):
     assert ids == {t_prem.id, t_free_due.id}
     assert t_free_recent.id not in ids and t_paused.id not in ids and t_error.id not in ids
     health.assert_awaited_once()
-    assert health.await_args.args[0] is bot
-    assert health.await_args.args[1] == {"a.example": [True, True]}
+    assert health.await_args.args == ({"a.example"},)          # домени цього прогону — на перевірку блокування
 
 
 async def test_dispatch_never_checked_go_first(db, dispatch_spies):
@@ -490,12 +489,11 @@ async def test_dispatch_collects_failures_per_domain_and_continues(db, monkeypat
 
     monkeypatch.setattr(pc, "check_single_price", AsyncMock(side_effect=fake_check))
     health = AsyncMock()
-    monkeypatch.setattr(pc, "_check_domain_health", health)
+    monkeypatch.setattr(pc, "_update_domain_blocks", health)
 
     await pc.dispatch_price_checks(make_bot())      # виняток одного трекера не зупиняє решту
 
-    results = health.await_args.args[1]
-    assert sorted(results["good.example"]) == [True, True] and results["bad.example"] == [False]
+    assert health.await_args.args[0] == {"good.example", "bad.example"}
 
 
 async def test_dispatch_end_to_end_with_patched_scraper(db, monkeypatch):
@@ -504,64 +502,12 @@ async def test_dispatch_end_to_end_with_patched_scraper(db, monkeypatch):
     tr = await seed_tracker(user, "https://shop.example/p/1", price="1000")
     patch_scrape(monkeypatch, product(price="900"))
     health = AsyncMock()
-    monkeypatch.setattr(pc, "_check_domain_health", health)
+    monkeypatch.setattr(pc, "_update_domain_blocks", health)
     bot = make_bot()
     await pc.dispatch_price_checks(bot)
     assert (await load_tracker(tr.id)).current_price == D("900")
     bot.send_message.assert_awaited_once()
-    assert health.await_args.args[1] == {"shop.example": [True]}
-
-
-# ─── _check_domain_health ────────────────────────────────────────
-
-async def test_domain_health_no_alert_under_three_results():
-    bot = make_bot()
-    await pc._check_domain_health(bot, {"rozetka.com.ua": [False, False]})
-    bot.send_message.assert_not_awaited()
-
-
-async def test_domain_health_no_alert_under_half_failures():
-    bot = make_bot()
-    await pc._check_domain_health(bot, {"rozetka.com.ua": [False, True, True, True]})
-    bot.send_message.assert_not_awaited()
-
-
-async def test_domain_health_alert_with_platform_name():
-    bot = make_bot()
-    await pc._check_domain_health(bot, {"rozetka.com.ua": [False, False, True], "ok.example": [True, True, True]})
-    bot.send_message.assert_awaited_once()
-    kw = bot.send_message.await_args.kwargs
-    assert kw["chat_id"] == ADMIN
-    assert "Rozetka" in kw["text"] and "rozetka.com.ua" in kw["text"]
-    assert "2/3" in kw["text"] and "67%" in kw["text"]
-    assert "перевірено" in kw["text"] and "selectors" in kw["text"]
-
-
-async def test_domain_health_alert_unknown_domain():
-    bot = make_bot()
-    await pc._check_domain_health(bot, {"www.unknown.example": [False, False, False]})
-    text = bot.send_message.await_args.kwargs["text"]
-    assert "unknown.example" in text and "немає в реєстрі" in text and "100%" in text
-
-
-async def test_domain_health_exactly_half_alerts():
-    bot = make_bot()
-    await pc._check_domain_health(bot, {"x.example": [False, True, False, True]})
-    bot.send_message.assert_awaited_once()
-
-
-async def test_domain_health_send_exception_swallowed():
-    bot = make_bot()
-    bot.send_message = AsyncMock(side_effect=Exception("network"))
-    await pc._check_domain_health(bot, {"x.example": [False, False, False]})   # без винятку
-    bot.send_message.assert_awaited_once()
-
-
-async def test_domain_health_disabled_without_admin(monkeypatch):
-    monkeypatch.setattr(pc.settings, "ADMIN_TELEGRAM_ID", 0)
-    bot = make_bot()
-    await pc._check_domain_health(bot, {"x.example": [False, False, False]})
-    bot.send_message.assert_not_awaited()
+    assert health.await_args.args[0] == {"shop.example"}
 
 
 # ─── handle_expired_premiums / _pause_excess_trackers ────────────
@@ -676,7 +622,9 @@ def test_setup_scheduler_registers_jobs(monkeypatch):
 
         dispatch = jobs["dispatch_price_checks"]
         assert dispatch.func is pc.dispatch_price_checks and dispatch.args == (bot,)
-        assert isinstance(dispatch.trigger, IntervalTrigger) and dispatch.trigger.interval == timedelta(minutes=5)
+        # щохвилини: Premium-лоти під кінець торгів перевіряються раз на 2 хв (решта — за своїм інтервалом)
+        assert isinstance(dispatch.trigger, IntervalTrigger) and dispatch.trigger.interval == timedelta(minutes=1)
+        assert dispatch.max_instances == 1 and dispatch.coalesce
         now = datetime.now(timezone.utc)
         assert timedelta(seconds=30) < dispatch.next_run_time - now <= timedelta(minutes=1)
         assert timedelta(minutes=1, seconds=30) < expired.next_run_time - now <= timedelta(minutes=2)

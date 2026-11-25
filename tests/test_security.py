@@ -164,3 +164,51 @@ async def test_bot_user_rate_limit_warns_once_and_drops(db):
     assert len(answers) == 1 and "Забагато запитів" in answers[0]       # попередження — одне на вікно
     other = make_message(78, "hi")
     assert await mw(handler, other, {"event_from_user": tg_user(78)}) == "ok"   # інших не зачіпає
+
+
+
+# ─── Нічний збій мережі ≠ «внутрішня адреса» ─────────────────────
+
+async def test_dns_outage_is_transient_network_error_not_forbidden(db, monkeypatch):
+    """20.10: вночі зник інтернет → DNS не відповідав → forbidden_target → 6 позицій назавжди ERROR."""
+    import socket
+    from app.database.models import TrackerStatus
+    from app.scheduler import price_checker as pc
+    from app.services.scrapers.scraper import ScrapeError, ScraperFactory
+    from tests.test_scheduler import load_tracker, seed_tracker, seed_user
+
+    async def no_dns(host):
+        raise socket.gaierror(8, "nodename nor servname provided, or not known")
+    monkeypatch.setattr(netguard, "_resolve", no_dns)
+    netguard.clear_cache()
+
+    url = "https://shop.example/p/1"
+    res = await ScraperFactory.get(url).scrape(url)
+    assert isinstance(res, ScrapeError) and res.reason == "network"
+
+    user = await seed_user(1)
+    tr = await seed_tracker(user, url)
+    for _ in range(6):                                            # більше за ERROR_LIMIT=5
+        await pc.check_single_price(await load_tracker(tr.id), None)
+    fresh = await load_tracker(tr.id)
+    assert fresh.status == TrackerStatus.ACTIVE and fresh.consecutive_errors == 6
+
+
+async def test_render_route_aborts_as_dns_failure_when_unresolved(monkeypatch):
+    from app.services.scrapers.render import BrowserRenderer
+
+    async def unresolved(host):
+        raise netguard.HostUnresolved(host)
+    monkeypatch.setattr(netguard, "host_is_public", unresolved)
+
+    class Route:
+        request = type("Req", (), {"resource_type": "document", "url": "https://shop.example/p/1"})()
+        aborted = continued = None
+
+        async def abort(self, code="failed"):
+            Route.aborted = code
+
+        async def continue_(self):
+            Route.continued = True
+    await BrowserRenderer._route(Route())
+    assert Route.aborted == "namenotresolved" and Route.continued is None

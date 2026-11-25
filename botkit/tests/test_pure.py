@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import socket
 import sys
 
 import httpx
@@ -100,3 +101,21 @@ async def test_media_download_error_hides_token(kit, monkeypatch):
     with pytest.raises(tg.TelegramFileError) as e:
         await tg.download_file("documents/x.pdf")
     assert TOKEN not in str(e.value)
+
+
+async def test_netguard_dns_failure_is_network_not_forbidden(monkeypatch):
+    """20.10: вночі зник інтернет — DNS не відповідав, а netguard казав «внутрішня адреса» (forbidden_target),
+    і позиції за 5 перевірок назавжди ставали ERROR. Невдалий DNS — мережевий збій, і його не кешуємо."""
+    calls = {"n": 0}
+
+    async def resolve(host):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise socket.gaierror(8, "nodename nor servname provided, or not known")
+        return ["93.184.216.34"]
+    monkeypatch.setattr(netguard, "_resolve", resolve)
+    netguard.clear_cache()
+    with pytest.raises(netguard.HostUnresolved):
+        await netguard.check_url("https://rozetka.com.ua/x")
+    assert not issubclass(netguard.HostUnresolved, netguard.ForbiddenTarget)
+    await netguard.check_url("https://rozetka.com.ua/x")          # мережа повернулась — хибного кешу немає

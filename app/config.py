@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # Як часто перевіряти ціни (хвилини)
     FREE_TIER_CHECK_INTERVAL_MINUTES: int = 360    # 6 годин
     PREMIUM_CHECK_INTERVAL_MINUTES: int = 60       # 1 година
+    # Аукціони (Premium): за N хв до кінця торгів — частіше (ставка наприкінці продовжує лот на +5 хв)
+    AUCTION_END_WINDOW_MINUTES: int = 20
+    AUCTION_END_INTERVAL_MINUTES: int = 2
     # Головний цикл планувальника (кожні N хвилин)
     SCHEDULER_INTERVAL_MINUTES: int = 15
     # Антиспам "знову в наявності": повторний RESTOCK по тому ж товару не раніше ніж через N днів
@@ -43,6 +46,9 @@ class Settings(BaseSettings):
 
     # ─── Scraping ────────────────────────────────────────────────
     SCRAPE_DELAY_SECONDS: float = 2.0
+    # Скільки різних сторінок одного магазину перевіряємо за хвилину; решта — наступними хвилинами
+    # (з однієї домашньої IP: сплеск запитів — найпевніший шлях під антибот)
+    DOMAIN_MAX_CHECKS_PER_MINUTE: int = 6
     REQUEST_TIMEOUT_SECONDS: float = 15.0
     SCRAPE_MAX_RETRIES: int = 3
 

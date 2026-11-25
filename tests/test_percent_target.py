@@ -209,8 +209,8 @@ async def seed_tracker(user: User, url: str, *, title: str, price: str = "4500",
 
 
 @pytest.mark.parametrize("lang, pct_line, abs_line", [
-    ("uk", "💰 4 500 грн → 🎯−15%", "💰 4 500 грн → 🎯4 000 грн"),
-    ("en", "💰 ₴4,500 → 🎯−15%", "💰 ₴4,500 → 🎯₴4,000"),
+    ("uk", "🎯 Чекаю: −15% (ціна ≤ 3 825 грн)", "🎯 Чекаю: ціна ≤ 4 000 грн"),
+    ("en", "🎯 Waiting for: −15% (price ≤ ₴3,825)", "🎯 Waiting for: price ≤ ₴4,000"),
 ])
 async def test_list_renders_percent_and_absolute_targets(db, lang, pct_line, abs_line):
     uid = 100 if lang == "uk" else 101
@@ -222,15 +222,19 @@ async def test_list_renders_percent_and_absolute_targets(db, lang, pct_line, abs
         await h.cmd_list_msg(make_message(uid, "/list", lang))
     text = sent[0].text
     assert pct_line in text and abs_line in text
-    none_block = text.split("NoTarget")[1].split("\n")[1]
-    assert "🎯" not in none_block
+    none_block = text.split("NoTarget")[1].split("\n")[2]
+    assert "🎯" not in none_block and "📉" in none_block
 
 
-def test_list_target_text_helper():
-    assert h.list_target_text(PriceTracker(target_price=None, currency="UAH"), "uk") == ""
-    assert h.list_target_text(PriceTracker(target_price=D("3825"), target_percent=D("15.5"), currency="UAH"), "uk") == " → 🎯−15,5%"
-    assert h.list_target_text(PriceTracker(target_price=D("3825"), target_percent=D("15.5"), currency="UAH"), "en") == " → 🎯−15.5%"
-    assert h.list_target_text(PriceTracker(target_price=D("3825"), target_percent=None, currency="USD"), "en") == " → 🎯$3,825"
+def test_list_expect_line_targets():
+    def line(lang, **kw):
+        tr = PriceTracker(currency=kw.pop("currency", "UAH"), notify_drop=True, notify_increase=False,
+                          is_available=True, source="shop.example", **kw)
+        return h.list_item_lines(tr, lang)[-1]
+    assert line("uk", target_price=None) == "📉 Чекаю: знижку від 3% (ціль не задана)"
+    assert line("uk", target_price=D("3825"), target_percent=D("15.5")) == "🎯 Чекаю: −15,5% (ціна ≤ 3 825 грн)"
+    assert line("en", target_price=D("3825"), target_percent=D("15.5")) == "🎯 Waiting for: −15.5% (price ≤ ₴3,825)"
+    assert line("en", target_price=D("3825"), currency="USD") == "🎯 Waiting for: price ≤ $3,825"
 
 
 # ─── Сповіщення TARGET_REACHED ───────────────────────────────────

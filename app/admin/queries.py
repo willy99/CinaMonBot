@@ -14,9 +14,12 @@ from sqlalchemy import and_, case, desc, func, or_, select
 
 from app.services import runtime_settings as rt
 from app.database.models import (
-    Feedback, Notification, NotificationStatus,
+    DomainBlock, Feedback, Notification, NotificationStatus,
     PriceHistory, PriceTracker, ScrapeLog, SubscriptionTier, TrackerStatus, User,
 )
+
+# Усі «паузи» трекера: вручну, ліміт тарифу, магазин блокує перевірки
+_PAUSED_STATUSES = (TrackerStatus.PAUSED, TrackerStatus.PAUSED_LIMIT, TrackerStatus.PAUSED_DOMAIN)
 from app.database.session import get_session
 from app.timeutil import fmt, kyiv_date_key, utc_range_for_kyiv_days
 from app.services.scrapers import registry
@@ -106,7 +109,7 @@ async def overview() -> Overview:
         users_new_prev_7d=users_new_prev_7d,
         trackers_total=sum(by_status.values()),
         trackers_active=by_status.get(TrackerStatus.ACTIVE, 0),
-        trackers_paused=by_status.get(TrackerStatus.PAUSED, 0) + by_status.get(TrackerStatus.PAUSED_LIMIT, 0),
+        trackers_paused=sum(by_status.get(st, 0) for st in _PAUSED_STATUSES),
         trackers_error=by_status.get(TrackerStatus.ERROR, 0),
         checks_24h=checks_24h,
         checks_prev_24h=checks_prev,
@@ -409,7 +412,7 @@ async def trackers_list(status: str = "all", source: str = "all", search: str = 
         .order_by(PriceTracker.created_at.desc())
     )
     if status == "paused":
-        stmt = stmt.where(PriceTracker.status.in_([TrackerStatus.PAUSED, TrackerStatus.PAUSED_LIMIT]))
+        stmt = stmt.where(PriceTracker.status.in_(_PAUSED_STATUSES))
     elif status != "all":
         stmt = stmt.where(PriceTracker.status == status)
     if source != "all":
@@ -494,11 +497,12 @@ def _pct(fails: int, total: int) -> float | None:
 
 
 async def _tracker_stats(s) -> dict[str, dict]:
-    """{key: {"trackers", "active", "error", "paused", "users"}} по ключах реєстру."""
+    """{key: {"trackers", "active", "error", "paused", "paused_domain", "users"}} по ключах реєстру."""
     out: dict[str, dict] = {}
 
     def bucket(key: str) -> dict:
-        return out.setdefault(key, {"trackers": 0, "active": 0, "error": 0, "paused": 0, "_users": set()})
+        return out.setdefault(key, {"trackers": 0, "active": 0, "error": 0, "paused": 0, "paused_domain": 0,
+                                    "_users": set()})
 
     rows = (await s.execute(
         select(PriceTracker.source, PriceTracker.status, func.count())
@@ -511,8 +515,10 @@ async def _tracker_stats(s) -> dict[str, dict]:
             b["active"] += int(cnt)
         elif status == TrackerStatus.ERROR:
             b["error"] += int(cnt)
-        elif status in (TrackerStatus.PAUSED, TrackerStatus.PAUSED_LIMIT):
+        elif status in _PAUSED_STATUSES:
             b["paused"] += int(cnt)
+            if status == TrackerStatus.PAUSED_DOMAIN:
+                b["paused_domain"] += int(cnt)
 
     pairs = (await s.execute(select(PriceTracker.source, PriceTracker.user_id).distinct())).all()
     for source, user_id in pairs:
@@ -584,9 +590,10 @@ async def _platform_rows() -> list[dict]:
         sc24 = await _scrape_stats(s, n - timedelta(days=1))
         last_fail = await _last_rows(s, ok=False)
         last_ok = await _last_rows(s, ok=True)
+        blocks = await _domain_blocks(s)
 
-    keys = {p.domain for p in registry.PLATFORMS} | set(tr) | set(sc30)
-    empty_tr = {"trackers": 0, "active": 0, "error": 0, "paused": 0, "users": 0}
+    keys = {p.domain for p in registry.PLATFORMS} | set(tr) | set(sc30) | set(blocks)
+    empty_tr = {"trackers": 0, "active": 0, "error": 0, "paused": 0, "paused_domain": 0, "users": 0}
     empty_sc = {"checks": 0, "fails": 0, "healed": 0, "avg_ms": None, "last_ok": None}
     rows = []
     for key in keys:
@@ -595,12 +602,18 @@ async def _platform_rows() -> list[dict]:
         s30 = sc30.get(key, empty_sc)
         s24 = sc24.get(key, empty_sc)
         observed_strategy = last_ok.get(key, (None, ""))[1]
+        block = blocks.get(key)
         rows.append({
             "id": key,
             "domain": key,
             "name": p.name if p else key,
             "country": p.country if p else "",
-            "status": p.status if p else "other",
+            # Автоблокування (domain_blocks) — поверх статусу з реєстру: магазин зараз нас не пускає
+            "status": "blocked" if block else (p.status if p else "other"),
+            "auto_blocked": block is not None,
+            "blocked_at": _fmt_dt(block.blocked_at) if block else "",
+            "blocked_reason": (block.reason or "") if block else "",
+            "paused_domain": t_["paused_domain"],
             "strategy": (p.strategy if p and p.strategy else observed_strategy) or "",
             "notes": p.notes if p else "",
             "sample_url": p.sample_url if p else "",
@@ -640,6 +653,13 @@ async def platforms_overview() -> PlatformsOverview:
             select(func.count()).select_from(ScrapeLog)
             .where(ScrapeLog.created_at >= d30, ScrapeLog.healed == True)
         )).scalar_one()
+        blocks = await _domain_blocks(s)
+
+    # Автоблокування рахуємо як «блокують», якщо в реєстрі домен ще не позначений так
+    for key in blocks:
+        p = registry.platform_for(key)
+        if not p or p.status != "blocked":
+            by_status["blocked"] += 1
 
     other = {_norm_host(d) for d in (*sources, *logged) if d and registry.platform_for(d) is None}
     checks_24h = int(checks_24h or 0)
@@ -686,6 +706,9 @@ async def platform_detail(domain: str, days: int = 30, recent: int = 20) -> dict
         last = (await s.execute(
             select(ScrapeLog).where(cond).order_by(ScrapeLog.created_at.desc()).limit(recent)
         )).scalars().all()
+        key = p.domain if p else _norm_host(domain)
+        block = (await _domain_blocks(s)).get(key)
+        paused_domain = (await _tracker_stats(s)).get(key, {}).get("paused_domain", 0)
 
     ok_map: dict[str, int] = {}
     fail_map: dict[str, int] = {}
@@ -699,7 +722,11 @@ async def platform_detail(domain: str, days: int = 30, recent: int = 20) -> dict
     return {
         "domain": p.domain if p else _norm_host(domain),
         "name": p.name if p else _norm_host(domain),
-        "status": p.status if p else "other",
+        "status": "blocked" if block else (p.status if p else "other"),
+        "auto_blocked": block is not None,
+        "blocked_at": _fmt_dt(block.blocked_at) if block else "",
+        "blocked_reason": (block.reason or "") if block else "",
+        "paused_domain": paused_domain,
         "country": p.country if p else "",
         "strategy": p.strategy if p else "",
         "notes": p.notes if p else "",
@@ -718,6 +745,33 @@ async def platform_detail(domain: str, days: int = 30, recent: int = 20) -> dict
             "duration_ms": int(r.duration_ms or 0),
         } for r in last],
     }
+
+
+async def _domain_blocks(s) -> dict[str, DomainBlock]:
+    """Автозаблоковані магазини (domain_blocks) за ключем реєстру."""
+    return {_platform_key(b.domain): b for b in (await s.execute(select(DomainBlock))).scalars().all()}
+
+
+async def unblock_domain(domain: str) -> int:
+    """
+    Зняти автоблокування магазину: прибрати domain_blocks і повернути PAUSED_DOMAIN-трекери в ACTIVE
+    (лічильник помилок — з нуля), потім перерахувати ліміт Free для їхніх власників. → скільки трекерів повернули.
+    """
+    from sqlalchemy import update
+    from app.services.limits import sync_free_limit
+    key = _platform_key(domain)
+    async with get_session() as s:
+        blocked = [b for b in (await s.execute(select(DomainBlock))).scalars().all() if _platform_key(b.domain) == key]
+        sources = {b.domain for b in blocked} | {key}
+        for b in blocked:
+            await s.delete(b)
+        cond = (PriceTracker.source.in_(sources), PriceTracker.status == TrackerStatus.PAUSED_DOMAIN)
+        user_ids = set((await s.execute(select(PriceTracker.user_id).where(*cond))).scalars().all())
+        res = await s.execute(update(PriceTracker).where(*cond)
+                              .values(status=TrackerStatus.ACTIVE, consecutive_errors=0))
+    for user_id in user_ids:
+        await sync_free_limit(user_id)
+    return res.rowcount or 0
 
 
 async def platform_problems_24h(min_attempts: int = 3, min_rate: float = 30.0) -> list[dict]:

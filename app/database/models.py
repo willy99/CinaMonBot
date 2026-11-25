@@ -43,6 +43,7 @@ class TrackerStatus(StrEnum):
     ACTIVE = "active"
     PAUSED = "paused"              # зупинено вручну (адмін)
     PAUSED_LIMIT = "paused_limit"  # понад ліміт безкоштовного плану — не перевіряється
+    PAUSED_DOMAIN = "paused_domain"  # магазин стабільно блокує перевірки (domain_blocks); знімає адмін
     ERROR = "error"
     OUT_OF_STOCK = "out_of_stock"
 
@@ -149,6 +150,8 @@ class PriceTracker(Base, TimestampMixin):
     # ── Налаштування сповіщень по товару ──
     notify_drop: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)      # зниження ціни / ціль
     notify_restock: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)   # знову в наявності
+    # подорожчання ≥3% — лише за бажанням (за замовчуванням вимкнено: нікого раптом не засипаємо)
+    notify_increase: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
     last_restock_notified_at: Mapped[datetime | None] = mapped_column(DateTime)           # антиспам для restock
 
     # ── Ціль у відсотках: "скажи, коли впаде на 15%" від ціни на момент додавання ──
@@ -161,6 +164,7 @@ class PriceTracker(Base, TimestampMixin):
     ends_at: Mapped[datetime | None] = mapped_column(DateTime)                  # UTC, оновлюється при перевірках
     remind_before_minutes: Mapped[int | None] = mapped_column(Integer)         # 60 / 30; None — без нагадування
     ending_notified_at: Mapped[datetime | None] = mapped_column(DateTime)      # коли нагадали (раз на лот)
+    lot_outcome: Mapped[str | None] = mapped_column(String(8))                  # sold / unsold зі сторінки лота
 
     user: Mapped[User] = relationship(back_populates="trackers")
     price_history: Mapped[list[PriceHistory]] = relationship(
@@ -291,10 +295,24 @@ class ScrapeLog(Base):
         DateTime, server_default=func.now(), nullable=False
     )
 
+
     __table_args__ = (
         Index("ix_scrape_log_domain_created", "domain", "created_at"),
         Index("ix_scrape_log_created", "created_at"),
     )
+
+
+class DomainBlock(Base):
+    """
+    Магазин, що стабільно блокує перевірки (антибот / 403 — див. price_checker._update_domain_blocks).
+    Поки рядок є: в адмінці (/platforms) — «заблоковано», трекери юзерів на цьому домені — PAUSED_DOMAIN.
+    Знімає адмін кнопкою «Розблокувати» — трекери повертаються в ACTIVE. Адміну в Telegram нічого не шлемо.
+    """
+    __tablename__ = "domain_blocks"
+
+    domain: Mapped[str] = mapped_column(String(128), primary_key=True)
+    reason: Mapped[str | None] = mapped_column(String(64))           # найчастіша причина невдач (scrape_log)
+    blocked_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
 # ─── Фідбек користувачів (/feedback у боті) ──────────────────────

@@ -374,10 +374,11 @@ TRACKER_STATUS_KEYS = {
     "active": "status_active",
     "paused": "status_paused",
     "paused_limit": "status_paused_limit",
+    "paused_domain": "status_paused_domain",
     "error": "status_error",
     "out_of_stock": "status_out_of_stock",
 }
-TRACKER_STATUS_KINDS = {"active": "good", "paused": "warning", "paused_limit": "warning",
+TRACKER_STATUS_KINDS = {"active": "good", "paused": "warning", "paused_limit": "warning", "paused_domain": "warning",
                         "error": "critical", "out_of_stock": "serious"}
 
 

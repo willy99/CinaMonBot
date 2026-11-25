@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import re
 import time
 from abc import ABC, abstractmethod
@@ -80,6 +81,8 @@ class ProductData:
     strategy: str = ""
     # Аукціони: коли закінчуються торги (aware datetime); для магазинів — None
     ends_at: datetime | None = None
+    # Аукціони: результат торгів — "sold" / "unsold"; None — торги тривають або результат ще невідомий
+    lot_outcome: str | None = None
 
 
 @dataclass(frozen=True)
@@ -338,6 +341,10 @@ def _find_by_selectors(soup: BeautifulSoup, selectors: list[str]) -> Tag | None:
 
 # ─── Rate limiter ────────────────────────────────────────────────
 
+# Розкид пауз між запитами до магазину: до +50 % від SCRAPE_DELAY_SECONDS (рівний ритм — ознака бота)
+RATE_JITTER = 0.5
+
+
 class DomainRateLimiter:
     def __init__(self, delay: float | None = None):
         self._delay = delay          # None → SCRAPE_DELAY_SECONDS з налаштувань (змінюється на льоту, /settings)
@@ -353,6 +360,7 @@ class DomainRateLimiter:
         async with self._lock(domain):
             now = time.monotonic()
             delay = self._delay if self._delay is not None else float(rt.cached("SCRAPE_DELAY_SECONDS"))
+            delay += random.uniform(0, delay * RATE_JITTER)
             wait = delay - (now - self._last.get(domain, 0))
             if wait > 0:
                 await asyncio.sleep(wait)
@@ -427,11 +435,16 @@ class AbstractScraper(ABC):
         except netguard.ForbiddenTarget:
             logger.warning("forbidden_target", domain=self.domain)
             return ScrapeError(url=canonical, reason="forbidden_target")
-        try:
-            result, healed = await self._scrape_with_retries(canonical)
-        except Exception as e:  # noqa: BLE001 — страховка: планувальник не має падати через парсер
-            logger.error("scrape_crashed", domain=self.domain, error=str(e))
-            result, healed = ScrapeError(url=canonical, reason="max_retries_exceeded"), False
+        except netguard.HostUnresolved:
+            # DNS не відповів (зник інтернет) — тимчасовий мережевий збій, а не «внутрішня адреса»
+            logger.warning("dns_unresolved", domain=self.domain)
+            result, healed = ScrapeError(url=canonical, reason="network"), False
+        else:
+            try:
+                result, healed = await self._scrape_with_retries(canonical)
+            except Exception as e:  # noqa: BLE001 — страховка: планувальник не має падати через парсер
+                logger.error("scrape_crashed", domain=self.domain, error=str(e))
+                result, healed = ScrapeError(url=canonical, reason="max_retries_exceeded"), False
         duration_ms = int((time.monotonic() - started) * 1000)
 
         try:
@@ -534,7 +547,7 @@ class AbstractScraper(ABC):
             except httpx.HTTPStatusError as e:
                 last_reason = "max_retries_exceeded"
                 logger.warning("http_error", domain=self.domain, status=e.response.status_code, attempt=attempt)
-            except (httpx.TimeoutException, httpx.NetworkError) as e:
+            except (httpx.TimeoutException, httpx.NetworkError, netguard.HostUnresolved) as e:
                 last_reason = "network"
                 logger.warning("network_error", domain=self.domain, error=str(e), attempt=attempt)
             except Exception as e:  # noqa: BLE001

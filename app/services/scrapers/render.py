@@ -331,10 +331,16 @@ class BrowserRenderer:
         try:
             if route.request.resource_type in BLOCKED_RESOURCE_TYPES:
                 await route.abort()
-            elif not await netguard.host_is_public(urlparse(route.request.url).hostname or ""):
-                await route.abort("blockedbyclient")      # SSRF: сторінка не дістанеться внутрішніх адрес
             else:
-                await route.continue_()
+                try:
+                    public = await netguard.host_is_public(urlparse(route.request.url).hostname or "")
+                except netguard.HostUnresolved:
+                    await route.abort("namenotresolved")      # DNS не відповів — як звичайний мережевий збій
+                    return
+                if not public:
+                    await route.abort("blockedbyclient")      # SSRF: сторінка не дістанеться внутрішніх адрес
+                else:
+                    await route.continue_()
         except Exception:  # noqa: BLE001 — сторінку вже закрили
             pass
 

@@ -122,7 +122,7 @@ async def test_dispatch_skips_paused_limit(db, monkeypatch):
     checked = []
     async def fake_check(tracker, bot): checked.append(tracker.title)
     monkeypatch.setattr(pc, "check_single_price", fake_check)
-    monkeypatch.setattr(pc, "_check_domain_health", lambda *a, **k: __import__("asyncio").sleep(0))
+    monkeypatch.setattr(pc, "_update_domain_blocks", lambda *a, **k: __import__("asyncio").sleep(0))
     await pc.dispatch_price_checks(None)
     assert sorted(checked) == sorted(f"T{i}" for i in range(LIMIT))
 

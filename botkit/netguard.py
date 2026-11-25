@@ -6,6 +6,10 @@
 Дозволені лише http(s) і хости, ВСІ адреси яких публічні (ipaddress.is_global). Перевірка йде на кожен
 запит: httpx — event hook (зокрема кожен крок редиректу), Playwright — route на кожен запит сторінки.
 
+DNS не відповів (немає мережі, DNS лежить) — HostUnresolved: це мережевий збій, а не «внутрішня адреса»
+(ForbiddenTarget вважається постійною помилкою — 20.10 через нічний обрив інтернету позиції ставали ERROR).
+Такий результат не кешуємо: щойно мережа повернеться, наступна перевірка резолвить наново.
+
 Залишковий ризик — DNS rebinding між перевіркою і з'єднанням (TTL≈0); для нього потрібен власний резолвер
 у транспорті. Для бота на домашній машині прийнятно; на сервері з чутливою мережею — додати егрес-фаєрвол.
 """
@@ -25,6 +29,10 @@ _cache: dict[str, tuple[float, bool]] = {}
 
 class ForbiddenTarget(Exception):
     """URL веде на внутрішню / приватну адресу."""
+
+
+class HostUnresolved(OSError):
+    """DNS не відповів для хоста — мережевий збій (тимчасовий), а не заборонена адреса."""
 
 
 def _ip_public(raw: str) -> bool:
@@ -52,9 +60,12 @@ async def host_is_public(host: str) -> bool:
         return cached[1]
     try:
         addrs = await _resolve(host)
+    except UnicodeError:
+        ok = False                       # некоректне ім'я хоста — не пускаємо
+    except OSError as e:                 # socket.gaierror тощо: DNS не відповів — без кешу
+        raise HostUnresolved(host) from e
+    else:
         ok = bool(addrs) and all(_ip_public(a) for a in addrs)
-    except (socket.gaierror, UnicodeError, OSError):
-        ok = False                       # не резолвиться — далі все одно впаде як network
     _cache[host] = (now, ok)
     return ok
 
