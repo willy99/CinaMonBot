@@ -16,10 +16,12 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 
 import structlog
+from aiogram.exceptions import TelegramRetryAfter
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
+from app.config import settings
 from app.scheduler import breaker
 from botkit.ops import heartbeat
 from app.services import runtime_settings as rt
@@ -28,6 +30,7 @@ from app.database.models import (
     PriceTracker, PriceHistory, Notification,
     TrackerStatus, PriceEventType, NotificationStatus,
 )
+from app.services.scrapers import scraper as scraper_mod
 from app.services.scrapers.scraper import ScraperFactory, ScrapeError
 from app.services.scrapers.scrape_log import prune_scrape_log
 from app.i18n import t, fmt_money, fmt_percent
@@ -45,6 +48,11 @@ ENDED_AUCTION_GRACE = timedelta(hours=6)
 AUCTION_END_TAIL = timedelta(minutes=10)
 # Тік планувальника — щохвилини, а перевірка займає секунди: без допуску «раз на 2 хв» ставало б «раз на 3»
 DUE_SLACK = timedelta(seconds=30)
+# Трекер того ж посилання, що вже перевіряємо, підтягуємо, якщо минуло ≥ цієї частки його інтервалу
+SHARED_REFRESH_FRACTION = 0.5
+# Telegram: ≤ 30 повідомлень/с на бота — тримаємо запас; на RetryAfter чекаємо й пробуємо ще раз
+TELEGRAM_MIN_GAP_SECONDS = 1 / 25
+TELEGRAM_MAX_RETRY_WAIT_SECONDS = 60
 
 # Одне посилання — один запит за прогін: кілька юзерів можуть стежити за тією самою сторінкою.
 # dispatch кладе сюди {canonical_url: Task} на час прогону; поза прогоном (None) — звичайний scrape.
@@ -220,30 +228,38 @@ async def _dispatch_price_checks(bot) -> None:
         trackers = result.scalars().all()
 
     now = datetime.now(timezone.utc)
-    to_check = []
-    # Межа на магазин: різних сторінок за хвилину (прогін = хвилина). Трекери вже відсортовані від найдавніше
-    # перевірених, тож надлишок рівномірно переходить на наступні хвилини, а не б'є сплеском.
-    cap = int(rt.cached("DOMAIN_MAX_CHECKS_PER_MINUTE"))
-    urls_by_domain: dict[str, set[str]] = {}
-    deferred = 0
-
+    naive_now = now.replace(tzinfo=None)
+    # Межа на магазин: різних сторінок за хвилину (прогін = хвилина). Надлишок рівномірно переходить на наступні
+    # хвилини, а не б'є сплеском. Черга — за простроченням (last_checked + інтервал), а не за давністю перевірки:
+    # інакше годинні трекери Premium стоять за 6-годинними free і першими випадають за межу (навантажувальний тест).
+    default_cap = int(rt.cached("DOMAIN_MAX_CHECKS_PER_MINUTE"))
+    overrides = _domain_cap_overrides()
+    eligible: list[tuple[PriceTracker, int, datetime | None]] = []
     for tracker in trackers:
-        interval = _check_interval_minutes(tracker, now.replace(tzinfo=None))
         if tracker.source and breaker.is_open(tracker.source):
             continue                  # магазин тимчасово недоступний — last_checked_at не чіпаємо
-        if tracker.ends_at is not None and tracker.ends_at < now.replace(tzinfo=None) - ENDED_AUCTION_GRACE:
+        if tracker.ends_at is not None and tracker.ends_at < naive_now - ENDED_AUCTION_GRACE:
             continue                  # торги давно завершені, фінальна ціна вже є — не смикаємо сайт
-        if tracker.last_checked_at is not None:
-            last = tracker.last_checked_at
-            if last.tzinfo is None:
-                last = last.replace(tzinfo=timezone.utc)
-            if now < last + timedelta(minutes=interval) - DUE_SLACK:
-                continue
+        interval = _check_interval_minutes(tracker, naive_now)
+        last = tracker.last_checked_at
+        if last is not None and last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        eligible.append((tracker, interval, last))
+    eligible.sort(key=lambda e: (e[2] is not None, e[2] + timedelta(minutes=e[1]) if e[2] else now))
+
+    to_check: list[PriceTracker] = []
+    chosen: set[str] = set()
+    urls_by_domain: dict[str, set[str]] = {}
+    deferred = 0
+    for tracker, interval, last in eligible:
+        if last is not None and now < last + timedelta(minutes=interval) - DUE_SLACK:
+            break                     # відсортовано за терміном — далі нікому ще не час
         urls = urls_by_domain.setdefault(tracker.source or "", set())
-        if tracker.canonical_url not in urls and len(urls) >= cap:
+        if tracker.canonical_url not in urls and len(urls) >= overrides.get(tracker.source or "", default_cap):
             deferred += 1
             continue                  # межа магазину на цю хвилину — візьмемо наступним тіком
         urls.add(tracker.canonical_url)
+        chosen.add(tracker.canonical_url)
         to_check.append(tracker)
 
         # НОВЕ: зупиняємось як тільки набрали ліміт
@@ -251,25 +267,57 @@ async def _dispatch_price_checks(bot) -> None:
         if len(to_check) >= MAX_CHECKS_PER_RUN:
             break
 
+    # Сторінку однаково завантажуємо — тож оновлюємо й інших, хто за нею стежить і пройшов хоч пів інтервалу.
+    # Запиту це не додає, а з часом трекери одного товару сходяться в один запит (тест на 1000 юзерах: −9 % запитів
+    # уже за 15 хв) і падіння ціни на популярному товарі доходить до більшості одразу, а не впродовж 6 годин.
+    picked = {t.id for t in to_check}
+    joined = 0
+    for tracker, interval, last in eligible:
+        if len(to_check) >= MAX_CHECKS_PER_RUN:
+            break
+        if tracker.id in picked or tracker.canonical_url not in chosen:
+            continue
+        if last is not None and now < last + timedelta(minutes=interval * SHARED_REFRESH_FRACTION):
+            continue
+        to_check.append(tracker)
+        joined += 1
+
     if not to_check:
         logger.info("dispatch_nothing_to_check", total=len(trackers))
         return
 
-    logger.info("dispatch_checking", count=len(to_check), total=len(trackers), deferred_by_shop_cap=deferred)
+    logger.info("dispatch_checking", count=len(to_check), total=len(trackers), deferred_by_shop_cap=deferred,
+                joined_same_url=joined)
 
+    # Магазин за магазином паралельно, а всередині магазину — по черзі: запити до одного домену однаково йдуть
+    # по одному (DomainRateLimiter). Коли всі трекери кидали в один gather, перевірки, що чекали паузи Rozetka
+    # (чи 30-секундного відступу після 429), займали всі 5 слотів, і інші магазини стояли: прогін тягнувся 70–120 с
+    # замість 20–30, планувальник пропускав тіки (навантажувальний тест).
     semaphore = asyncio.Semaphore(5)
+    by_domain: dict[str, list[PriceTracker]] = {}
+    for tracker in to_check:
+        by_domain.setdefault(tracker.source or tracker.id, []).append(tracker)
 
-    async def check_with_semaphore(tracker: PriceTracker) -> None:
-        async with semaphore:
-            try:
-                await check_single_price(tracker, bot)
-            except Exception as e:
-                logger.error("tracker_check_failed", tracker_id=tracker.id, error=str(e))
+    async def check_domain(trackers: list[PriceTracker]) -> None:
+        for tracker in trackers:
+            if tracker.source and breaker.is_open(tracker.source):
+                # Магазин щойно відповів 429/антиботом і став на паузу — решту його сторінок цього прогону не
+                # смикаємо (кожна знову ловила б 429). last_checked_at не чіпаємо.
+                logger.info("dispatch_domain_paused_mid_run", domain=tracker.source,
+                            skipped=len(trackers) - trackers.index(tracker))
+                return
+            async with semaphore:
+                try:
+                    await check_single_price(tracker, bot)
+                except Exception as e:
+                    logger.error("tracker_check_failed", tracker_id=tracker.id, error=str(e))
 
     token = _run_scrapes.set({})
+    batch = scraper_mod.in_batch.set(True)
     try:
-        await asyncio.gather(*[check_with_semaphore(t) for t in to_check])
+        await asyncio.gather(*[check_domain(ts) for ts in by_domain.values()])
     finally:
+        scraper_mod.in_batch.reset(batch)
         _run_scrapes.reset(token)
     await _update_domain_blocks({t.source for t in to_check if t.source})
     logger.info("dispatch_finished", checked=len(to_check))
@@ -338,6 +386,19 @@ def _check_interval_minutes(tracker: PriceTracker, now: datetime) -> int:
         if tracker.ends_at - window <= now < tracker.ends_at + AUCTION_END_TAIL:
             return int(rt.cached("AUCTION_END_INTERVAL_MINUTES"))
     return int(rt.cached("PREMIUM_CHECK_INTERVAL_MINUTES" if premium else "FREE_TIER_CHECK_INTERVAL_MINUTES"))
+
+
+def _domain_cap_overrides() -> dict[str, int]:
+    """DOMAIN_CAP_OVERRIDES="rozetka.com.ua=12,prom.ua=10" → {домен: межа}; кривий запис пропускаємо."""
+    out: dict[str, int] = {}
+    for part in (settings.DOMAIN_CAP_OVERRIDES or "").split(","):
+        domain, _, value = part.partition("=")
+        try:
+            if domain.strip() and int(value) > 0:
+                out[domain.strip().lower()] = int(value)
+        except ValueError:
+            logger.warning("bad_domain_cap_override", entry=part.strip()[:60])
+    return out
 
 
 async def _scrape_once_per_run(scraper, url: str):
@@ -665,15 +726,18 @@ async def _send_notification(
         retarget = "above" if tracker.target_direction == "above" else "below"
     keyboard = notification_keyboard(lang, MUTE_KIND_BY_EVENT.get(event, "drop"), tracker.id, retarget=retarget)
 
+    # Ціну й історію фіксуємо до походу в Telegram: інакше запис у SQLite тримає блокування бази, поки йде
+    # мережевий запит (і всю паузу RetryAfter), а інші перевірки чекають його до busy_timeout
+    await session.commit()
     try:
         # Єдиний адресат — власник трекера (tracker.user_id → User.telegram_id)
-        msg = await bot.send_message(
+        msg = await _paced(lambda: bot.send_message(
             chat_id=user.telegram_id,
             text=text,
             parse_mode="HTML",
             disable_web_page_preview=False,
             reply_markup=keyboard,
-        )
+        ))
         session.add(Notification(
             user_id=user.id,
             tracker_id=tracker.id,
@@ -702,3 +766,29 @@ async def _send_notification(
             error_message=str(e)[:200],
         ))
         logger.error("notification_failed", error=str(e))
+
+_tg_lock = asyncio.Lock()
+_tg_last_sent = 0.0
+
+
+async def _paced(request):
+    """Запит до Telegram (request() — одна відправка) не швидше за ~25/с на весь процес; на TelegramRetryAfter — чекаємо скільки сказали й ще раз.
+
+    Без цього сплеск сповіщень (падіння ціни на популярному товарі) упирається в ліміт Telegram 30/с, і зайві
+    повідомлення ставали FAILED — юзер їх так і не отримував.
+    """
+    global _tg_last_sent
+    loop = asyncio.get_running_loop()
+    for attempt in range(2):
+        async with _tg_lock:
+            wait = _tg_last_sent + TELEGRAM_MIN_GAP_SECONDS - loop.time()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            _tg_last_sent = loop.time()
+        try:
+            return await request()
+        except TelegramRetryAfter as e:
+            if attempt or e.retry_after > TELEGRAM_MAX_RETRY_WAIT_SECONDS:
+                raise
+            logger.warning("telegram_retry_after", seconds=e.retry_after)
+            await asyncio.sleep(e.retry_after)

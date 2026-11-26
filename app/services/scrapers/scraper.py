@@ -28,6 +28,7 @@ import random
 import re
 import time
 from abc import ABC, abstractmethod
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -412,6 +413,12 @@ class _BlockedStatus(Exception):
         self.status = status
 
 
+# True на час планового прогону (dispatch): там 429 не пересиджуємо 30+60 с посеред прогону — магазин одразу
+# стає на паузу через запобіжник (app/scheduler/breaker.py), а решта магазинів не чекає. Поза прогоном (юзер додає
+# товар) — як і раніше, кілька повторів з відступом.
+in_batch: ContextVar[bool] = ContextVar("scrape_in_batch", default=False)
+
+
 async def _sleep(seconds: float) -> None:
     """Пауза між повторами (винесена, щоб тести могли її підмінити)."""
     await asyncio.sleep(seconds)
@@ -541,6 +548,8 @@ class AbstractScraper(ABC):
             except _BlockedStatus as e:
                 blocked_status = e.status
                 logger.warning("http_blocked", domain=self.domain, status=e.status, attempt=attempt)
+                if e.status == 429 and in_batch.get():
+                    break
                 if e.status == 429 and attempt < rt.cached("SCRAPE_MAX_RETRIES"):
                     await _sleep(30 * attempt)
                     continue

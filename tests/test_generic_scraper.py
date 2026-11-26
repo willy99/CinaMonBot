@@ -191,6 +191,22 @@ async def test_429_then_success(fast):
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_429_in_scheduled_run_gives_up_at_once(fast):
+    """У плановому прогоні 429 не пересиджуємо: одна спроба → blocked, далі пауза магазину через запобіжник."""
+    from app.services.scrapers import scraper as scraper_mod
+    route = respx.get("https://shop.example.ua/p")
+    route.side_effect = [httpx.Response(429), html_response(PRODUCT_HTML)]
+    token = scraper_mod.in_batch.set(True)
+    try:
+        result = await GenericScraper("https://shop.example.ua/p").scrape("https://shop.example.ua/p")
+    finally:
+        scraper_mod.in_batch.reset(token)
+    assert isinstance(result, ScrapeError) and result.reason == "blocked"
+    assert route.call_count == 1
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_404_is_not_found_without_retry(fast):
     route = respx.get("https://shop.example.ua/gone").mock(return_value=httpx.Response(404))
     result = await GenericScraper("https://shop.example.ua/gone").scrape("https://shop.example.ua/gone")
