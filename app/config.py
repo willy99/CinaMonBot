@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     # Скільки різних сторінок одного магазину перевіряємо за хвилину; решта — наступними хвилинами
     # (з однієї домашньої IP: сплеск запитів — найпевніший шлях під антибот)
     DOMAIN_MAX_CHECKS_PER_MINUTE: int = 6
+    # Окремі межі для великих магазинів, які тримають більше: "rozetka.com.ua=12,prom.ua=10".
+    # Навантажувальний тест (scripts/loadtest.py): на ~600+ юзерах Rozetka упирається в 6/хв, черга росте.
+    DOMAIN_CAP_OVERRIDES: str = ""
     REQUEST_TIMEOUT_SECONDS: float = 15.0
     SCRAPE_MAX_RETRIES: int = 3
 
