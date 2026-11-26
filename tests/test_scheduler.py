@@ -1,6 +1,7 @@
 """Планувальник (app.scheduler.price_checker): події, перевірка ціни, сповіщення, диспетчер, закінчення Premium."""
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock
@@ -676,7 +677,8 @@ async def test_dispatch_skips_paused_domain_and_success_reopens(db, monkeypatch)
     await pc.dispatch_price_checks(make_bot())
     mock.assert_not_awaited()                                   # домен на паузі — не ходимо
     breaker.reset()
-    breaker.trip(tr.source, "blocked", now=0.0)                 # пауза давно минула
+    # Пауза давно минула. Не now=0.0: на щойно запущеній CI-машині monotonic() < 300 с, і пауза ще тривала б.
+    breaker.trip(tr.source, "blocked", now=time.monotonic() - 24 * 3600)
     await pc.dispatch_price_checks(make_bot())
     mock.assert_awaited_once()
     assert not breaker.snapshot()                               # успіх закрив запобіжник
